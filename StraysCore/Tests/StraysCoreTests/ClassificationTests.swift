@@ -71,6 +71,120 @@ final class ProjectResolverTests: XCTestCase {
     }
 }
 
+/// The mode the app uses: answers from memory, looks at the disk elsewhere.
+final class BackgroundProjectResolverTests: XCTestCase {
+    private var home: TemporaryDirectory!
+
+    override func setUpWithError() throws {
+        home = try TemporaryDirectory()
+        try home.write(#"{"name": "real-name"}"#, to: "code/shop/package.json")
+    }
+
+    private var shop: String { home.path + "/code/shop" }
+
+    func testFirstCallAnswersAtOnceAndTheProjectFollows() async {
+        let resolver = ProjectResolver(homeDirectory: home.path, mode: .background)
+        XCTAssertNil(resolver.project(forDirectory: shop), "nothing is known yet, and it did not wait to find out")
+
+        await resolver.settle(timeout: 5)
+        XCTAssertFalse(resolver.hasPendingLookups)
+        XCTAssertEqual(resolver.project(forDirectory: shop)?.rootPath, shop)
+    }
+
+    func testFolderNameComesFirstAndThePackageNameReplacesIt() async {
+        let resolver = ProjectResolver(homeDirectory: home.path, mode: .background)
+        _ = resolver.project(forDirectory: shop)
+        let named = await eventually { resolver.project(forDirectory: self.shop)?.name == "real-name" }
+        XCTAssertTrue(named)
+    }
+
+    func testPackageNamesCanBeTurnedOff() async {
+        // Reading a file's contents is what macOS may prompt about.
+        let resolver = ProjectResolver(homeDirectory: home.path, mode: .background, packageNames: .never)
+        _ = resolver.project(forDirectory: shop)
+        await resolver.settle(timeout: 5)
+        try? await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(resolver.project(forDirectory: shop)?.name, "shop")
+
+        let inline = ProjectResolver(homeDirectory: home.path, packageNames: .never)
+        XCTAssertEqual(inline.project(forDirectory: shop)?.name, "shop")
+    }
+
+    func testFoldersBehindAPrivacyPromptAreRecognised() {
+        let resolver = ProjectResolver(homeDirectory: "/Users/me")
+        for path in ["/Users/me/Documents", "/Users/me/Documents/Projects/shop", "/Users/me/Desktop/x", "/Users/me/Downloads/y",
+                     "/Users/me/Library/Mobile Documents/com~apple~CloudDocs/z", "/Users/me/Library/CloudStorage/Dropbox/w", "/Volumes/Work/shop"] {
+            XCTAssertTrue(resolver.isProtectedByPrivacyPrompt(path), path)
+        }
+        for path in ["/Users/me/code/shop", "/Users/me/Developer/x", "/Users/me", "/Users/me/DocumentsBackup/x", "/private/tmp/x", "/opt/work"] {
+            XCTAssertFalse(resolver.isProtectedByPrivacyPrompt(path), path)
+        }
+    }
+
+    func testByDefaultNoFileIsOpenedWhereMacOSWouldPrompt() throws {
+        // A stand-in home with a project in Documents and one outside it.
+        try home.write(#"{"name": "in-documents"}"#, to: "Documents/Projects/shop/package.json")
+        let cautious = ProjectResolver(homeDirectory: home.path, packageNames: .unprotectedOnly)
+
+        XCTAssertEqual(cautious.project(forDirectory: home.path + "/Documents/Projects/shop")?.name, "shop", "found, but named by its folder")
+        XCTAssertEqual(cautious.project(forDirectory: shop)?.name, "real-name", "outside the guarded folders the name is read")
+
+        let trusting = ProjectResolver(homeDirectory: home.path, packageNames: .everywhere)
+        XCTAssertEqual(trusting.project(forDirectory: home.path + "/Documents/Projects/shop")?.name, "in-documents")
+    }
+
+    func testChangingThePolicyTakesEffectAtOnce() {
+        let resolver = ProjectResolver(homeDirectory: home.path, packageNames: .never)
+        XCTAssertEqual(resolver.project(forDirectory: shop)?.name, "shop")
+        let before = resolver.revision
+        resolver.setPackageNamePolicy(.everywhere)
+        XCTAssertNotEqual(resolver.revision, before)
+        XCTAssertEqual(resolver.project(forDirectory: shop)?.name, "real-name")
+    }
+
+    func testADiskThatNeverAnswersNeverBlocksTheCaller() async {
+        // Stands in for macOS holding a read until the user answers a
+        // privacy prompt, or a network volume that has gone away.
+        let gate = DispatchSemaphore(value: 0)
+        let resolver = ProjectResolver(homeDirectory: home.path, mode: .background) { _ in gate.wait() }
+        defer { gate.signal() }
+
+        let started = Date()
+        XCTAssertNil(resolver.project(forDirectory: shop))
+        XCTAssertNil(resolver.project(forDirectory: shop), "asking again does not queue a second lookup or wait")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.2)
+        XCTAssertTrue(resolver.hasPendingLookups)
+
+        await resolver.settle(timeout: 0.2)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1.5, "settle gives up at its timeout")
+        XCTAssertNil(resolver.project(forDirectory: shop))
+    }
+
+    func testAnswerArrivesOnceTheDiskDoes() async {
+        let gate = DispatchSemaphore(value: 0)
+        let resolver = ProjectResolver(homeDirectory: home.path, mode: .background) { _ in gate.wait() }
+        XCTAssertNil(resolver.project(forDirectory: shop))
+        gate.signal()
+        await resolver.settle(timeout: 5)
+        XCTAssertEqual(resolver.project(forDirectory: shop)?.rootPath, shop)
+    }
+
+    func testAStaleAnswerIsServedWhileItIsRefreshed() async throws {
+        let resolver = ProjectResolver(homeDirectory: home.path, mode: .background, cacheLifetime: 0.05) { _ in }
+        _ = resolver.project(forDirectory: shop)
+        await resolver.settle(timeout: 5)
+        try await Task.sleep(for: .milliseconds(120))
+        XCTAssertNotNil(resolver.project(forDirectory: shop), "expired, but still the best answer we have")
+    }
+
+    func testSettleReturnsImmediatelyWhenNothingIsPending() async {
+        let resolver = ProjectResolver(homeDirectory: home.path, mode: .background)
+        let started = Date()
+        await resolver.settle(timeout: 5)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.5)
+    }
+}
+
 final class DevProcessClassifierTests: XCTestCase {
     private var home: TemporaryDirectory!
     private var classifier: DevProcessClassifier!

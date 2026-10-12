@@ -8,6 +8,7 @@ struct MenuBarPopover: View {
     @Environment(\.openWindow) private var openWindow
     @State private var showsOthers = false
     @State private var listHeight: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static let width: CGFloat = 372
     private static let maximumListHeight: CGFloat = 440
@@ -110,6 +111,7 @@ struct MenuBarPopover: View {
                 ProjectHeader(group: group)
                 ForEach(group.strays) { stray in
                     StrayRow(stray: stray)
+                        .transition(.strayRow(reduceMotion: reduceMotion))
                 }
             }
             if !model.otherListeners.isEmpty {
@@ -171,9 +173,7 @@ struct MenuBarPopover: View {
 
     private var emptyState: some View {
         VStack(spacing: 8) {
-            Image(systemName: "pawprint")
-                .font(.system(size: 26, weight: .light))
-                .foregroundStyle(.tertiary)
+            PawTrail()
             Text("No strays")
                 .font(.system(size: 13, weight: .semibold))
             Text("Dev servers, watchers, and anything your\ncoding agents leave running will show up here.")
@@ -399,6 +399,8 @@ struct ToastView: View {
         HStack(spacing: 7) {
             Image(systemName: toast.symbol)
                 .foregroundStyle(toast.symbol.contains("exclamationmark") ? Theme.brew : .green)
+                // The restrained success moment: one small bounce.
+                .symbolEffect(.bounce, value: toast.id)
             Text(toast.message)
                 .lineLimit(1)
                 .truncationMode(.middle)

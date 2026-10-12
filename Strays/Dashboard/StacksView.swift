@@ -7,11 +7,11 @@ struct StacksView: View {
 
     var body: some View {
         if model.stacks.isEmpty {
-            ContentUnavailableView {
-                Label("No stacks yet", systemImage: "square.stack.3d.up")
-            } description: {
-                Text("A stack is everything one project needs, started and stopped with one click: a dev server, a worker, a compose project, a Homebrew service.")
-            } actions: {
+            EmptyStateView(
+                "No stacks yet",
+                message: "A stack is everything one project needs, started and stopped with one click: a dev server, a worker, a compose project, a Homebrew service.",
+                tint: Theme.dev
+            ) {
                 Button("New Stack") { model.addStack(named: "New Stack") }
                     .buttonStyle(.borderedProminent)
             }
@@ -84,10 +84,7 @@ private struct StackCard: View {
         }
         .padding(15)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            shape.fill(.ultraThinMaterial)
-            shape.fill(LinearGradient(colors: [Theme.dev.opacity(0.07), .clear], startPoint: .topLeading, endPoint: .bottomTrailing))
-        }
+        .background { CardSurface(accent: Theme.dev) }
         .overlay { shape.strokeBorder(.primary.opacity(0.08)) }
         .animation(Theme.hoverSpring, value: isAddingCommand)
         .confirmationDialog("Delete the stack “\(stack.name)”?", isPresented: $isConfirmingDelete) {

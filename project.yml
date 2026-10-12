@@ -19,7 +19,7 @@ settings:
     CODE_SIGN_IDENTITY: "-"
     ENABLE_HARDENED_RUNTIME: YES
     DEAD_CODE_STRIPPING: YES
-    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
 
 packages:
   StraysCore:
@@ -31,8 +31,20 @@ targets:
     platform: macOS
     sources:
       - path: Strays
+        # Shaders are compiled by a script phase, so that a Mac without the
+        # Metal toolchain can still build the app.
+        excludes:
+          - "**/*.metal"
     dependencies:
       - package: StraysCore
+    postCompileScripts:
+      - name: Compile Metal shaders
+        script: '"${SRCROOT}/scripts/compile-shaders.sh"'
+        inputFiles:
+          - $(SRCROOT)/Strays/Shaders/Dissolve.metal
+          - $(SRCROOT)/scripts/compile-shaders.sh
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Strays.metallib
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.suryavmds.strays
@@ -43,6 +55,14 @@ targets:
         INFOPLIST_KEY_LSUIElement: YES
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         INFOPLIST_KEY_NSHumanReadableCopyright: "MIT License. Copyright © 2026 Surya Prakash."
+        # Shown by macOS if it has to ask. Strays only reads file contents in
+        # these folders when asked to in Settings; commands started from a
+        # stack run there under Strays' name.
+        INFOPLIST_KEY_NSDocumentsFolderUsageDescription: "Strays reads package.json to name your projects, and runs the commands in your stacks here."
+        INFOPLIST_KEY_NSDesktopFolderUsageDescription: "Strays reads package.json to name your projects, and runs the commands in your stacks here."
+        INFOPLIST_KEY_NSDownloadsFolderUsageDescription: "Strays reads package.json to name your projects, and runs the commands in your stacks here."
+        INFOPLIST_KEY_NSRemovableVolumesUsageDescription: "Strays reads package.json to name your projects, and runs the commands in your stacks here."
+        INFOPLIST_KEY_NSNetworkVolumesUsageDescription: "Strays reads package.json to name your projects, and runs the commands in your stacks here."
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         # No App Sandbox: Strays inspects other processes, sends signals,

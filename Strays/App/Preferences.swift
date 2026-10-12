@@ -9,6 +9,7 @@ enum Preferences {
         static let staleAfterHours = "staleAfterHours"
         static let notificationPlanner = "staleNotificationPlanner"
         static let showsHidden = "showsHidden"
+        static let packageNamePolicy = "packageNamePolicy"
         static let preferredTerminal = "preferredTerminal"
     }
 
@@ -23,6 +24,13 @@ enum Preferences {
     /// at first launch would be presumptuous.
     static var areStaleNotificationsEnabled: Bool {
         UserDefaults.standard.bool(forKey: Key.staleNotificationsEnabled)
+    }
+
+    /// Where package.json may be opened for a project's name. The default
+    /// never triggers a macOS privacy prompt.
+    static var packageNamePolicy: ProjectResolver.PackageNamePolicy {
+        UserDefaults.standard.string(forKey: Key.packageNamePolicy)
+            .flatMap(ProjectResolver.PackageNamePolicy.init(rawValue:)) ?? .unprotectedOnly
     }
 
     static var notificationMode: StaleNotificationPlanner.Mode {

@@ -8,10 +8,9 @@ struct HiddenView: View {
     var body: some View {
         @Bindable var model = model
         if model.hideRules.isEmpty {
-            ContentUnavailableView(
+            EmptyStateView(
                 "Nothing is hidden",
-                systemImage: "eye.slash",
-                description: Text("Right-click anything and choose Hide to keep it out of the lists: by port, by name, or a whole project.")
+                message: "Right-click anything and choose Hide to keep it out of the lists: by port, by name, or a whole project."
             )
         } else {
             ScrollView {
@@ -92,6 +91,7 @@ struct SettingsView: View {
     @State private var staleHours = Preferences.staleAfterHours
     @AppStorage(CodeEditor.defaultsKey) private var editor = CodeEditor.preferred?.rawValue ?? ""
     @AppStorage(Preferences.Key.preferredTerminal) private var terminal = TerminalApp.preferred.rawValue
+    @State private var packageNames = Preferences.packageNamePolicy
 
     var body: some View {
         @Bindable var model = model
@@ -150,6 +150,21 @@ struct SettingsView: View {
                 .labelsHidden()
                 .fixedSize()
             }
+
+            Divider()
+            Picker("Name projects from package.json", selection: $packageNames) {
+                Text("Never: use the folder name").tag(ProjectResolver.PackageNamePolicy.never)
+                Text("Where no permission is needed").tag(ProjectResolver.PackageNamePolicy.unprotectedOnly)
+                Text("Everywhere").tag(ProjectResolver.PackageNamePolicy.everywhere)
+            }
+            .pickerStyle(.radioGroup)
+            .onChange(of: packageNames) { model.setPackageNamePolicy(packageNames) }
+            Text(packageNames == .everywhere
+                ? "macOS will ask whether Strays may access Documents, Desktop, or Downloads the first time a project there has a package.json."
+                : "Projects in Documents, Desktop, Downloads, and iCloud Drive are named after their folder, so macOS never has to ask you for access.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

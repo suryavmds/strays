@@ -114,6 +114,8 @@ final class AppModel {
     var dashboardRequest: DashboardRequest?
 
     @ObservationIgnored private var notifier: StaleNotifier?
+    /// Held for as long as the app runs; see `stayAwake()`.
+    @ObservationIgnored private var appNapOptOut: NSObjectProtocol?
     @ObservationIgnored private let monitor: Monitor?
     @ObservationIgnored private let controller = ProcessController()
     @ObservationIgnored private var survivors: [Stray.ID: [SignalTarget]] = [:]
@@ -132,11 +134,30 @@ final class AppModel {
         hideRules = store.loadHideRules()
         let monitor = Monitor(agents: catalog, stackStore: store)
         self.monitor = monitor
-        Task { await monitor.setStaleThreshold(hours: Preferences.staleAfterHours) }
+        Task {
+            await monitor.setStaleThreshold(hours: Preferences.staleAfterHours)
+            await monitor.setPackageNamePolicy(Preferences.packageNamePolicy)
+        }
+        stayAwake()
         observeSleep()
         subscribe()
         updateCadence()
         startNotifier()
+    }
+
+    /// Opts out of App Nap.
+    ///
+    /// A menu bar app with no window open is exactly what App Nap puts to
+    /// sleep: after half a minute its timers stop firing altogether, the
+    /// scans stop, and the count in the menu bar goes stale. Strays' whole
+    /// job is to notice things while you are not looking at it. The work
+    /// it stays awake for is a few milliseconds every ten seconds, and
+    /// this still lets the Mac itself go to sleep.
+    private func stayAwake() {
+        appNapOptOut = ProcessInfo.processInfo.beginActivity(
+            options: .userInitiatedAllowingIdleSystemSleep,
+            reason: "Watching for background processes so the menu bar count stays current"
+        )
     }
 
     /// Fixed data, for previews, screenshots, and the `--demo` flag. Nothing
@@ -299,6 +320,15 @@ final class AppModel {
         let granted = await notifier?.requestAuthorization() ?? false
         UserDefaults.standard.set(granted, forKey: Preferences.Key.staleNotificationsEnabled)
         return granted
+    }
+
+    func setPackageNamePolicy(_ policy: ProjectResolver.PackageNamePolicy) {
+        UserDefaults.standard.set(policy.rawValue, forKey: Preferences.Key.packageNamePolicy)
+        guard let monitor else { return }
+        Task {
+            await monitor.setPackageNamePolicy(policy)
+            await monitor.refresh()
+        }
     }
 
     func setStaleThreshold(hours: Double) {

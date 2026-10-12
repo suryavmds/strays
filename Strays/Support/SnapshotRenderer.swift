@@ -1,6 +1,7 @@
 #if DEBUG
 import AppKit
 import SwiftUI
+import StraysCore
 
 /// Renders the app's own views to PNG files, off screen, with demo data.
 ///
@@ -79,6 +80,15 @@ enum SnapshotRenderer {
             }
             renderWindow(pane.environment(model), size: CGSize(width: 1180, height: 760), scheme: .dark, to: directory.appendingPathComponent("dashboard-\(name)-dark.png"))
         }
+        // Nothing running at all: the empty states and their illustration.
+        let quiet = AppModel(demo: StraysSnapshot(strays: [], capturedAt: Date(), isDockerAvailable: false, isBrewAvailable: true))
+        render(popoverCanvas(quiet), size: CGSize(width: 372, height: 300), scheme: .dark, to: directory.appendingPathComponent("popover-empty-dark.png"))
+        let empty = DashboardView { state in
+            state.persistsViewMode = false
+            state.sidebar = .docker
+            state.isInspectorOpen = false
+        }
+        renderWindow(empty.environment(quiet), size: CGSize(width: 1180, height: 760), scheme: .dark, to: directory.appendingPathComponent("dashboard-empty-dark.png"))
         let palette = DashboardView { state in
             state.persistsViewMode = false
             state.viewMode = .cards

@@ -193,7 +193,14 @@ final class MonitorLiveTests: XCTestCase {
     private func monitor() -> Monitor {
         // No agent profiles: these tests must behave the same whether or
         // not the test run itself was started by an AI agent.
-        Monitor(homeDirectory: home.path, minimumAge: 0, sources: [], agents: AgentCatalog(agents: []))
+        Monitor(
+            homeDirectory: home.path,
+            minimumAge: 0,
+            sources: [],
+            agents: AgentCatalog(agents: []),
+            // Looks projects up on the spot, so one refresh is enough.
+            projectResolver: ProjectResolver(homeDirectory: home.path)
+        )
     }
 
     func testServerInAProjectIsADevStrayWithItsPort() async throws {
@@ -230,6 +237,38 @@ final class MonitorLiveTests: XCTestCase {
 
         let snapshot = await monitor().refresh()
         XCTAssertNil(snapshot.strays.first { $0.processGroup?.root.pid == worker.pid })
+    }
+
+    /// The regression behind this test: reading a package.json in Documents
+    /// blocked on a macOS privacy prompt, and the whole scan with it.
+    func testAScanIsNotHeldUpByADiskThatDoesNotAnswer() async throws {
+        let worker = try ThrowawayProcess.sleeper(cwd: projectURL)
+        defer { worker.stop() }
+
+        let gate = DispatchSemaphore(value: 0)
+        defer { gate.signal() }
+        let stuck = ProjectResolver(homeDirectory: home.path, mode: .background) { _ in gate.wait() }
+        let monitor = Monitor(homeDirectory: home.path, minimumAge: 0, sources: [], agents: AgentCatalog(agents: []), projectResolver: stuck)
+
+        let started = Date()
+        let first = await monitor.refresh()
+        let second = await monitor.refresh()
+        XCTAssertLessThan(Date().timeIntervalSince(started), 3, "two scans, each waiting at most a moment for projects")
+
+        let stray = try XCTUnwrap(second.strays.first { $0.processGroup?.root.pid == worker.pid })
+        XCTAssertEqual(stray.category, .dev, "still found and still listed")
+        XCTAssertNil(stray.project, "only its project is unknown")
+        XCTAssertTrue(first.strays.contains { $0.processGroup?.root.pid == worker.pid })
+    }
+
+    func testBackgroundResolverStillGroupsOnTheFirstScanWhenTheDiskIsQuick() async throws {
+        let worker = try ThrowawayProcess.sleeper(cwd: projectURL)
+        defer { worker.stop() }
+        // The default: what the app itself uses.
+        let monitor = Monitor(homeDirectory: home.path, minimumAge: 0, sources: [], agents: AgentCatalog(agents: []))
+        let snapshot = await monitor.refresh()
+        let stray = try XCTUnwrap(snapshot.strays.first { $0.processGroup?.root.pid == worker.pid })
+        XCTAssertEqual(stray.project?.rootPath, projectURL.path)
     }
 
     func testMonitorNeverListsItself() async {

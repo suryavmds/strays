@@ -52,6 +52,7 @@ struct DashboardView: View {
         .animation(Theme.listSpring, value: model.toast)
         .background(WindowVisibilityReader { model.isDashboardVisible = $0 })
         .background(DashboardWindowTracker())
+        .background { viewModeShortcuts }
         .onChange(of: model.dashboardRequest, initial: true) {
             // Asked from outside: a clicked notification, or the popover.
             switch model.dashboardRequest {
@@ -66,6 +67,18 @@ struct DashboardView: View {
             model.dashboardRequest = nil
         }
         .frame(minWidth: 900, minHeight: 540)
+    }
+
+    /// ⌘1, ⌘2, ⌘3 for cards, table, timeline. Invisible buttons are how
+    /// SwiftUI attaches a shortcut that has no control of its own.
+    private var viewModeShortcuts: some View {
+        ForEach(Array(DashboardViewMode.allCases.enumerated()), id: \.element) { index, mode in
+            Button(mode.title) { state.viewMode = mode }
+                .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
+        }
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .accessibilityHidden(true)
     }
 
     private var subtitle: String {
@@ -87,7 +100,7 @@ struct DashboardView: View {
     @ViewBuilder private var mainArea: some View {
         let sections = state.sections(in: model)
         ZStack {
-            VisualEffectBackground()
+            WindowBackdrop()
                 .ignoresSafeArea()
             if state.sidebar == .stacks {
                 StacksView()
@@ -124,26 +137,26 @@ struct DashboardView: View {
                 Button("Clear Filters") { state.filters.removeAll() }
             }
         } else if state.sidebar == .docker {
-            ContentUnavailableView(
+            EmptyStateView(
                 model.snapshot.isDockerAvailable ? "No containers" : "Docker isn’t running",
-                systemImage: "shippingbox",
-                description: Text(model.snapshot.isDockerAvailable
+                message: model.snapshot.isDockerAvailable
                     ? "Containers you create will show up here, running or stopped."
-                    : "Start Docker Desktop, OrbStack, or Colima and your containers will appear here.")
+                    : "Start Docker Desktop, OrbStack, or Colima and your containers will appear here.",
+                tint: Theme.docker
             )
         } else if state.sidebar == .brew {
-            ContentUnavailableView(
+            EmptyStateView(
                 model.snapshot.isBrewAvailable ? "No Homebrew services" : "Homebrew isn’t installed",
-                systemImage: "mug",
-                description: Text(model.snapshot.isBrewAvailable
+                message: model.snapshot.isBrewAvailable
                     ? "Formulae with a service, like Redis or Postgres, show up here once installed."
-                    : "Services managed with brew services would be listed here.")
+                    : "Services managed with brew services would be listed here.",
+                tint: Theme.brew
             )
         } else {
-            ContentUnavailableView(
+            EmptyStateView(
                 "Nothing running here",
-                systemImage: "pawprint",
-                description: Text("Dev servers, watchers, and whatever your coding agents leave behind will show up as soon as they start.")
+                message: "Dev servers, watchers, and whatever your coding agents leave behind will show up as soon as they start.",
+                tint: Theme.dev
             )
         }
     }

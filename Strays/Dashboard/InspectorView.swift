@@ -5,6 +5,7 @@ import StraysCore
 /// command, the environment (secrets masked), and the process tree.
 struct InspectorView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Bindable var state: DashboardState
 
     private var stray: Stray? {
@@ -19,6 +20,7 @@ struct InspectorView: View {
                     .padding(16)
             }
             .id(stray.id)
+            .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(x: 14)))
         } else {
             ContentUnavailableView(
                 "Nothing selected",

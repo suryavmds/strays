@@ -9,6 +9,10 @@ struct StrayCardsView: View {
 
     private let columns = [GridItem(.adaptive(minimum: 270, maximum: 420), spacing: 12, alignment: .top)]
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Shared by every card, so the selection ring glides from one to the next.
+    @Namespace private var selection
+
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 22) {
@@ -17,16 +21,18 @@ struct StrayCardsView: View {
                         SectionHeader(section: section)
                         LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
                             ForEach(section.strays) { stray in
-                                StrayCard(stray: stray, isSelected: state.selection == stray.id) {
-                                    state.select(stray)
+                                StrayCard(stray: stray, isSelected: state.selection == stray.id, selection: selection) {
+                                    withAnimation(reduceMotion ? nil : Theme.listSpring) { state.select(stray) }
                                 }
+                                // A stopped stray dissolves rather than vanishing.
+                                .transition(.strayCard(reduceMotion: reduceMotion))
                             }
                         }
                     }
                 }
             }
             .padding(20)
-            .animation(Theme.listSpring, value: sections.flatMap { $0.strays.map(\.id) })
+            .animation(reduceMotion ? .default : Theme.listSpring, value: sections.flatMap { $0.strays.map(\.id) })
         }
     }
 }
@@ -91,6 +97,7 @@ struct SectionHeader: View {
 struct StrayCard: View {
     let stray: Stray
     let isSelected: Bool
+    let selection: Namespace.ID
     let onSelect: () -> Void
 
     @Environment(AppModel.self) private var model
@@ -110,15 +117,16 @@ struct StrayCard: View {
         }
         .padding(13)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            shape.fill(.ultraThinMaterial)
-            shape.fill(LinearGradient(
-                colors: [accent.opacity(isHovering ? 0.13 : 0.07), .clear],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            ))
+        .background { CardSurface(accent: accent, intensity: isHovering ? 0.13 : 0.07) }
+        .overlay { shape.strokeBorder(borderStyle, lineWidth: stray.isLANVisible ? 1.5 : 1) }
+        .overlay {
+            // One ring, matched across cards: selecting another card makes
+            // it travel there instead of blinking out and in.
+            if isSelected {
+                shape.strokeBorder(accent == Theme.neutral ? Color.accentColor : accent, lineWidth: 2)
+                    .matchedGeometryEffect(id: "selection-ring", in: selection)
+            }
         }
-        .overlay { shape.strokeBorder(borderStyle, lineWidth: isSelected || stray.isLANVisible ? 1.5 : 1) }
         .shadow(color: .black.opacity(isHovering ? 0.22 : 0.1), radius: isHovering ? 12 : 5, y: isHovering ? 6 : 2)
         .scaleEffect(isHovering ? 1.012 : 1)
         .opacity(stray.isRunning ? 1 : 0.62)
@@ -138,10 +146,9 @@ struct StrayCard: View {
         .accessibilityAction(named: "Inspect", onSelect)
     }
 
-    /// Selection wins over the LAN warning, which wins over the resting hairline.
+    /// The LAN warning, or the resting hairline. Selection is drawn on top.
     private var borderStyle: AnyShapeStyle {
-        if isSelected { return AnyShapeStyle(accent == Theme.neutral ? Color.accentColor : accent) }
-        if stray.isLANVisible { return AnyShapeStyle(Theme.lan.opacity(0.7)) }
+        if stray.isLANVisible { return AnyShapeStyle(Theme.lan.opacity(isSelected ? 0 : 0.7)) }
         return AnyShapeStyle(.primary.opacity(isHovering ? 0.16 : 0.08))
     }
 
@@ -152,7 +159,7 @@ struct StrayCard: View {
                 .foregroundStyle(accent == Theme.neutral ? AnyShapeStyle(.secondary) : AnyShapeStyle(accent))
                 .frame(width: 32, height: 32)
                 .background(accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                .shadow(color: accent.opacity(stray.isBusy ? 0.55 : 0), radius: stray.isBusy ? 6 : 0)
+                .heartbeat(accent, isActive: stray.isBusy && stray.isRunning)
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {

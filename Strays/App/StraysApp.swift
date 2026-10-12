@@ -5,6 +5,12 @@ enum WindowID {
     static let dashboard = "dashboard"
 }
 
+enum LaunchOptions {
+    /// `--dashboard` opens the dashboard at launch. Without it Strays
+    /// starts quietly in the menu bar.
+    static let opensDashboard = CommandLine.arguments.contains("--dashboard")
+}
+
 @main
 struct StraysApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -43,5 +49,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             exit(0)
         }
         #endif
+        closeDashboardOpenedAtLaunch()
+    }
+
+    /// Some versions of macOS present a `Window` scene on their own when
+    /// the app starts. A menu bar app should start in the menu bar.
+    /// (`defaultLaunchBehavior` would say this directly, but needs macOS 15.)
+    private func closeDashboardOpenedAtLaunch() {
+        guard !LaunchOptions.opensDashboard else { return }
+        DispatchQueue.main.async {
+            for window in NSApp.windows where window.identifier?.rawValue.hasPrefix(WindowID.dashboard) == true {
+                window.close()
+            }
+        }
     }
 }

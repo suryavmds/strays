@@ -87,6 +87,7 @@ public actor Monitor {
     private let docker: DockerCollector?
     private let brew: BrewCollector?
     private let attribution: AttributionEngine
+    private let resolver: ProjectResolver
     private let currentUID = getuid()
 
     /// Processes Strays started for stack command items, by item id.
@@ -115,11 +116,15 @@ public actor Monitor {
         dockerCollector: DockerCollector? = nil,
         brewCollector: BrewCollector? = nil,
         agents: AgentCatalog = .bundled,
-        stackStore: StackStore? = nil
+        stackStore: StackStore? = nil,
+        projectResolver: ProjectResolver? = nil
     ) {
         self.stackStore = stackStore
         launched = stackStore?.loadLaunched() ?? [:]
-        let resolver = ProjectResolver(homeDirectory: homeDirectory)
+        // Background mode: a scan must never wait on the filesystem. And by
+        // default no file is opened where macOS would prompt the user.
+        let resolver = projectResolver ?? ProjectResolver(homeDirectory: homeDirectory, mode: .background, packageNames: .unprotectedOnly)
+        self.resolver = resolver
         let engine = AttributionEngine(catalog: agents)
         attribution = engine
         ports = PortCollector(includeOtherUsers: sources.contains(.otherUsers))
@@ -182,7 +187,17 @@ public actor Monitor {
         let brewSnapshot = await currentBrewSnapshot()
         let dockerSnapshot = await currentDockerSnapshot()
         let scan = await scan(serviceRoots: Set(brewSnapshot.services.compactMap(\.pid)))
+        let revision = resolver.revision
         var strays = merger.merge(processes: builder.build(from: scan), docker: dockerSnapshot, brew: brewSnapshot)
+        // Projects are looked up in the background. Give a folder that has
+        // just been seen a moment to answer, so things usually arrive
+        // already grouped; a disk that does not answer costs us only this.
+        await resolver.settle(timeout: 0.25)
+        if resolver.revision != revision {
+            // An answer came in after we asked, possibly before we could
+            // even start waiting. Build again with it.
+            strays = merger.merge(processes: builder.build(from: scan), docker: dockerSnapshot, brew: brewSnapshot)
+        }
 
         let now = Date()
         let stale = staleTracker.update(with: strays, now: now)
@@ -412,6 +427,11 @@ public actor Monitor {
     }
 
     // MARK: - Settings
+
+    /// Where `package.json` may be read for project names.
+    public func setPackageNamePolicy(_ policy: ProjectResolver.PackageNamePolicy) {
+        resolver.setPackageNamePolicy(policy)
+    }
 
     /// How long something must have run, idle, before it is flagged stale.
     public func setStaleThreshold(hours: Double) {

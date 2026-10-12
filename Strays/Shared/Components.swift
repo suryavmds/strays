@@ -94,7 +94,7 @@ struct StatusDot: View {
         Circle()
             .fill(color.gradient)
             .frame(width: 8, height: 8)
-            .shadow(color: color.opacity(isBusy ? 0.9 : 0), radius: isBusy ? 4 : 0)
+            .heartbeat(color, isActive: isBusy)
             .accessibilityHidden(true)
     }
 }

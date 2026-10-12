@@ -597,7 +597,7 @@ final class AgentAttributionLiveTests: XCTestCase {
 
     func testWorkerIsAttributedThenOrphanedWhenItsAgentExits() async throws {
         try await startAgent()
-        let monitor = Monitor(homeDirectory: home.path, minimumAge: 0, sources: [], agents: catalog)
+        let monitor = Monitor(homeDirectory: home.path, minimumAge: 0, sources: [], agents: catalog, projectResolver: ProjectResolver(homeDirectory: home.path))
 
         // While the agent runs.
         var attributed: Stray?
