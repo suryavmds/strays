@@ -310,7 +310,7 @@ private struct InspectorContent: View {
         return InspectorSection(title: "Environment", symbol: "list.bullet.rectangle", count: variables.count) {
             if variables.isEmpty {
                 Text(root.isInspectable
-                    ? "macOS does not reveal the environment of its own system binaries."
+                    ? "macOS did not reveal this process's environment. It can withhold it for its own system binaries."
                     : "Not available for another user's process.")
                     .font(.system(size: 10.5))
                     .foregroundStyle(.tertiary)

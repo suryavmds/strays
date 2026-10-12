@@ -120,7 +120,7 @@ func inspect(pid: Int32, showAllEnvironment: Bool) async {
     if process.environment.isEmpty {
         print("\nEnvironment: not readable.")
         print(process.isInspectable
-            ? "  macOS hides the environment of Apple's own system binaries (/bin/zsh, /usr/bin/ruby, …).\n  Inspect a node, python, or other third-party process instead."
+            ? "  macOS can withhold the environment of Apple's own system binaries (/bin/zsh, /usr/bin/ruby, …).\n  Inspect a node, python, or other third-party process instead."
             : "  This process belongs to another user.")
         return
     }

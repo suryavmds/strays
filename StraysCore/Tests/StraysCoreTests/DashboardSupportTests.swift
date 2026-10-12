@@ -152,7 +152,7 @@ final class ProcessLauncherTests: XCTestCase {
 
     /// Reads a process once it shows the marker in its environment.
     /// `/usr/bin/python3` is an Apple shim that re-execs the real interpreter,
-    /// and macOS hides the environment of the shim itself.
+    /// and macOS may hide the environment of the shim itself.
     private func settledDetails(of pid: Int32) async -> ProcessDetails? {
         var result: ProcessDetails?
         _ = await eventually {
@@ -183,15 +183,22 @@ final class ProcessLauncherTests: XCTestCase {
         XCTAssertNotEqual(relaunched.entry.pgid, details.entry.pgid)
     }
 
-    func testEnvironmentOfAppleSystemBinariesIsHidden() async throws {
-        // Documents a macOS limit that agent attribution has to live with.
+    /// Whether the environment of Apple's own system binaries can be read
+    /// depends on the machine: on macOS 26 it comes back empty, even to the
+    /// same user, while a macOS 15 CI runner returns it. Agent attribution
+    /// has to cope with both, so this asserts only what always holds: the
+    /// arguments are readable, and an environment is never wrong, only absent.
+    func testSystemBinaryEnvironmentIsEitherHiddenOrCorrect() async throws {
         let process = try ThrowawayProcess("/bin/sleep", ["60"], environment: ["STRAYS_RELAUNCH": "yes"])
         defer { process.stop() }
         let entry = try XCTUnwrap(LibProc.entry(for: process.pid))
         let inspected = await ProcessInspector().details(for: [entry])
         let details = try XCTUnwrap(inspected[process.pid])
         XCTAssertEqual(details.arguments, ["/bin/sleep", "60"])
-        XCTAssertTrue(details.environment.isEmpty)
+        XCTAssertTrue(details.isInspectable)
+        if !details.environment.isEmpty {
+            XCTAssertEqual(details.environment["STRAYS_RELAUNCH"], "yes")
+        }
     }
 
     func testRelaunchWithNoCapturedEnvironmentStillGetsOne() async throws {

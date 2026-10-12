@@ -100,8 +100,9 @@ agent that never started them.
 
 1. Ask the agent to run a long-lived command in the background, such as
    `node -e "setTimeout(() => {}, 600000)"`. Use `node`, `python`, or another
-   third-party runtime: macOS hides the environment of its own system
-   binaries (`/bin/sleep`, `/bin/zsh`), so those will show nothing.
+   third-party runtime: recent versions of macOS can hide the environment of
+   their own system binaries (`/bin/sleep`, `/bin/zsh`), and those may show
+   nothing.
 2. Find its PID and inspect it:
 
    ```bash

@@ -37,7 +37,7 @@ public enum ProcessLauncher {
     @discardableResult
     public static func relaunch(_ details: ProcessDetails) throws -> Int32 {
         guard let plan = plan(for: details) else { throw LaunchError.nothingToRun }
-        // macOS does not reveal the environment of Apple's own system
+        // macOS may not reveal the environment of Apple's own system
         // binaries. Starting a command with no PATH or HOME would be worse
         // than starting it with ours.
         let environment = details.environment.isEmpty ? ProcessInfo.processInfo.environment : details.environment

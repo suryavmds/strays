@@ -119,10 +119,12 @@ You can add or override profiles without rebuilding by putting an
 
 ### One macOS limit
 
-macOS does not reveal the environment of Apple's own system binaries
-(`/bin/zsh`, `/usr/bin/ruby`, and so on), even to the same user. An orphan
-running one of those can only be attributed while its agent is still its
-ancestor. Node, Python, Bun, and other third-party runtimes are unaffected.
+Recent versions of macOS may not reveal the environment of Apple's own system
+binaries (`/bin/zsh`, `/usr/bin/ruby`, and so on), even to the same user. This
+was observed on macOS 26; a macOS 15 machine did reveal it. Where it is
+hidden, an orphan running one of those can only be attributed while its agent
+is still its ancestor. Node, Python, Bun, and other third-party runtimes are
+unaffected.
 
 ## Why not just `lsof`?
 
