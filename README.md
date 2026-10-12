@@ -33,7 +33,7 @@ Requires macOS 14 Sonoma or later, on Apple Silicon or Intel.
 brew install --cask suryavmds/tap/strays
 ```
 
-Or download `Strays.zip` from the [latest release](https://github.com/suryavmds/strays/releases/latest),
+Or download `Strays-<version>.zip` from the [latest release](https://github.com/suryavmds/strays/releases/latest),
 unzip it, and drag `Strays.app` to Applications. Releases are signed with a
 Developer ID and notarized by Apple, so it opens like any other app.
 
