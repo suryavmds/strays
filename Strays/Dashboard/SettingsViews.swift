@@ -92,6 +92,8 @@ struct SettingsView: View {
     @AppStorage(CodeEditor.defaultsKey) private var editor = CodeEditor.preferred?.rawValue ?? ""
     @AppStorage(Preferences.Key.preferredTerminal) private var terminal = TerminalApp.preferred.rawValue
     @State private var packageNames = Preferences.packageNamePolicy
+    @AppStorage(Preferences.Key.checksForUpdates) private var checksForUpdates = true
+    @State private var hasCheckedNow = false
 
     var body: some View {
         @Bindable var model = model
@@ -266,8 +268,31 @@ struct SettingsView: View {
 
     private var about: some View {
         PaneSection(title: "About", symbol: "pawprint") {
-            LabeledContent("Version", value: StraysCore.version)
-            Text("Strays is free and open source, under the MIT license. It never asks for your password and sends nothing anywhere.")
+            LabeledContent("Version", value: Preferences.appVersion)
+            if let update = model.availableUpdate {
+                HStack(spacing: 8) {
+                    Label("Strays \(update.version.description) is available", systemImage: "arrow.down.circle.fill")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.dev)
+                    Button("View Release") { model.openUpdatePage() }
+                }
+            }
+            Toggle("Check for updates once a day", isOn: $checksForUpdates)
+            HStack(spacing: 8) {
+                Button("Check Now") {
+                    hasCheckedNow = true
+                    model.checkForUpdates()
+                }
+                .disabled(model.isCheckingForUpdates)
+                if model.isCheckingForUpdates {
+                    ProgressView().controlSize(.small)
+                } else if hasCheckedNow, model.availableUpdate == nil {
+                    Text("You have the latest version.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Text("The check asks GitHub for the latest release and sends nothing about your Mac. Strays never installs anything by itself. It is free and open source under the MIT license, and it never asks for your password.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

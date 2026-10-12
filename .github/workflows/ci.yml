@@ -12,14 +12,17 @@ concurrency:
 jobs:
   build-and-test:
     name: Build & test
-    runs-on: macos-14
+    # macos-15 is the oldest macOS image GitHub still offers: the macOS 14
+    # images are being retired and stop working on 2 November 2026. The app
+    # itself still targets macOS 14 (see MACOSX_DEPLOYMENT_TARGET).
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select the newest Xcode 16
+      - name: Select the newest Xcode
         run: |
-          xcode="$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)"
+          xcode="$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -1)"
           echo "Using $xcode"
           sudo xcode-select -s "$xcode"
           xcodebuild -version
@@ -28,8 +31,16 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      - name: Check the shaders
+        run: make check-shaders
+
+      # The dissolve shader needs the Metal toolchain, which is a separate
+      # download. Without it the build uses a fallback, which is all CI needs.
       - name: Build
         run: make build
 
       - name: Test
         run: make test
+
+      - name: Build the command-line tool
+        run: swift build --package-path strays-cli

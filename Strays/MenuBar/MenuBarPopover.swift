@@ -202,6 +202,10 @@ struct MenuBarPopover: View {
             Spacer()
 
             Menu {
+                if let update = model.availableUpdate {
+                    Button("Strays \(update.version.description) Is Available…") { model.openUpdatePage() }
+                    Divider()
+                }
                 Button("Refresh Now") { model.refresh() }
                     .keyboardShortcut("r", modifiers: .command)
                 Button("Stacks…") { openDashboard(at: .stacks) }
@@ -211,8 +215,9 @@ struct MenuBarPopover: View {
                 Button("Quit Strays") { NSApp.terminate(nil) }
                     .keyboardShortcut("q", modifiers: .command)
             } label: {
-                Image(systemName: "ellipsis.circle")
+                Image(systemName: model.availableUpdate == nil ? "ellipsis.circle" : "arrow.down.circle.fill")
                     .font(.system(size: 14))
+                    .foregroundStyle(model.availableUpdate == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(Theme.dev))
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)

@@ -72,6 +72,10 @@ targets:
         Release:
           ONLY_ACTIVE_ARCH: NO
           SWIFT_COMPILATION_MODE: wholemodule
+          # Xcode adds the get-task-allow debugging entitlement to every
+          # build unless told not to, and Apple will not notarize an app
+          # that has it. Debug keeps it, so the app can still be profiled.
+          CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
 
 schemes:
   Strays:

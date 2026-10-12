@@ -109,6 +109,11 @@ final class AppModel {
     }
 
     @ObservationIgnored private let store: StackStore?
+    /// A newer release on GitHub, if the daily check found one. Strays
+    /// only reports it; it never downloads or installs anything.
+    private(set) var availableUpdate: ReleaseInfo?
+    private(set) var isCheckingForUpdates = false
+
     /// Where the dashboard should go next, set from outside it: a clicked
     /// notification, or "Settings…" in the menu bar popover.
     var dashboardRequest: DashboardRequest?
@@ -143,6 +148,7 @@ final class AppModel {
         subscribe()
         updateCadence()
         startNotifier()
+        checkForUpdatesIfDue()
     }
 
     /// Opts out of App Nap.
@@ -618,6 +624,31 @@ final class AppModel {
         case let StackError.commandFailed(message): message.isEmpty ? "The command failed." : message
         default: error.localizedDescription
         }
+    }
+
+    // MARK: - Updates
+
+    /// At most once a day, and only if the user has not turned it off.
+    private func checkForUpdatesIfDue() {
+        guard Preferences.checksForUpdates else { return }
+        let last = UserDefaults.standard.double(forKey: Preferences.Key.lastUpdateCheck)
+        guard Date().timeIntervalSince1970 - last > 24 * 3_600 else { return }
+        checkForUpdates()
+    }
+
+    func checkForUpdates() {
+        guard !isDemo, !isCheckingForUpdates else { return }
+        isCheckingForUpdates = true
+        Task {
+            availableUpdate = await UpdateChecker().update(newerThan: Preferences.appVersion)
+            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Preferences.Key.lastUpdateCheck)
+            isCheckingForUpdates = false
+        }
+    }
+
+    func openUpdatePage() {
+        guard let update = availableUpdate else { return }
+        SystemActions.open(update.pageURL)
     }
 
     // MARK: - Stacks

@@ -10,6 +10,8 @@ enum Preferences {
         static let notificationPlanner = "staleNotificationPlanner"
         static let showsHidden = "showsHidden"
         static let packageNamePolicy = "packageNamePolicy"
+        static let checksForUpdates = "checksForUpdates"
+        static let lastUpdateCheck = "lastUpdateCheck"
         static let preferredTerminal = "preferredTerminal"
     }
 
@@ -31,6 +33,17 @@ enum Preferences {
     static var packageNamePolicy: ProjectResolver.PackageNamePolicy {
         UserDefaults.standard.string(forKey: Key.packageNamePolicy)
             .flatMap(ProjectResolver.PackageNamePolicy.init(rawValue:)) ?? .unprotectedOnly
+    }
+
+    /// On unless turned off: one request a day to GitHub's public API.
+    static var checksForUpdates: Bool {
+        UserDefaults.standard.object(forKey: Key.checksForUpdates) as? Bool ?? true
+    }
+
+    /// The version in the app's Info.plist, which the release build stamps
+    /// from the tag.
+    static var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? StraysCore.version
     }
 
     static var notificationMode: StaleNotificationPlanner.Mode {

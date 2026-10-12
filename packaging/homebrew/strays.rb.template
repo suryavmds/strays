@@ -1,0 +1,25 @@
+cask "strays" do
+  version "__VERSION__"
+  sha256 "__SHA256__"
+
+  url "https://github.com/__REPOSITORY__/releases/download/v#{version}/Strays-#{version}.zip"
+  name "Strays"
+  desc "Menu bar monitor for ports, dev servers, containers, and AI agent leftovers"
+  homepage "https://github.com/__REPOSITORY__"
+
+  livecheck do
+    url :url
+    strategy :github_latest
+  end
+
+  depends_on macos: ">= :sonoma"
+
+  app "Strays.app"
+
+  uninstall quit: "__BUNDLE_ID__"
+
+  zap trash: [
+    "~/Library/Application Support/Strays",
+    "~/Library/Preferences/__BUNDLE_ID__.plist",
+  ]
+end

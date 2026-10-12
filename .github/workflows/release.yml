@@ -1,0 +1,197 @@
+name: Release
+
+# Pushing a tag `vX.Y.Z` builds a universal Strays.app, signs it with a
+# Developer ID, has Apple notarize it, publishes a GitHub release with the
+# zip attached, and updates the Homebrew cask.
+#
+# Repository secrets this needs (Settings > Secrets and variables > Actions):
+#
+#   DEVELOPER_ID_P12_BASE64   The "Developer ID Application" certificate and its
+#                             private key, exported from Keychain Access as a
+#                             .p12 and base64-encoded:  base64 -i cert.p12 | pbcopy
+#   DEVELOPER_ID_P12_PASSWORD The password chosen when exporting the .p12.
+#   APPLE_TEAM_ID             The 10-character Team ID of the developer account.
+#   APPLE_ID                  The Apple ID (email) used for notarization.
+#   APPLE_APP_PASSWORD        An app-specific password for that Apple ID,
+#                             created at account.apple.com.
+#   TAP_GITHUB_TOKEN          Optional. A token that can push to the
+#                             <owner>/homebrew-tap repository. Without it the
+#                             cask is attached to the release instead.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, sign, notarize, publish
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      TAG: ${{ github.ref_name }}
+      BUILD_NUMBER: ${{ github.run_number }}
+      APP: build/Build/Products/Release/Strays.app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Work out the version
+        run: |
+          version="${TAG#v}"
+          source_version="$(sed -n 's/.*static let version = "\(.*\)"/\1/p' StraysCore/Sources/StraysCore/StraysCore.swift)"
+          if [ "$version" != "$source_version" ]; then
+            echo "::error::Tag $TAG does not match StraysCore.version ($source_version). Update the source, then tag."
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Check that the signing secrets are present
+        env:
+          P12: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          missing=0
+          for name in P12 P12_PASSWORD TEAM_ID APPLE_ID APP_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::A signing secret is missing ($name). See the list at the top of release.yml."
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - name: Select the newest Xcode
+        run: |
+          xcode="$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -1)"
+          echo "Using $xcode"
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      # The dissolve animation is a Metal shader, and a release must have it.
+      - name: Install the Metal toolchain
+        run: |
+          if ! xcrun -sdk macosx metal --version >/dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+          xcrun -sdk macosx metal --version
+
+      - name: Test
+        run: make test
+
+      - name: Import the Developer ID certificate
+        env:
+          P12: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password="$(uuidgen)"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/certificate.p12"
+          security find-identity -v -p codesigning "$keychain" | grep "Developer ID Application"
+
+      - name: Build
+        env:
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcodegen generate --quiet
+          REQUIRE_METAL=1 xcodebuild \
+            -project Strays.xcodeproj -scheme Strays -configuration Release \
+            -derivedDataPath build -destination 'generic/platform=macOS' \
+            ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
+            MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Developer ID Application" \
+            DEVELOPMENT_TEAM="$TEAM_ID" OTHER_CODE_SIGN_FLAGS="--timestamp" \
+            build | ./scripts/xcfilter.sh
+
+      - name: Check what was built
+        run: |
+          set -x
+          test "$(lipo -archs "$APP/Contents/MacOS/Strays" | tr ' ' '\n' | sort | tr '\n' ' ')" = "arm64 x86_64 "
+          test -f "$APP/Contents/Resources/Strays.metallib"
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist")" = "$VERSION"
+          # Apple refuses to notarize anything that can be debugged.
+          ! codesign -d --entitlements - "$APP" 2>/dev/null | grep -q "get-task-allow"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv --verbose=2 "$APP" 2>&1 | grep -E "Authority=Developer ID Application|flags=.*runtime|Timestamp="
+
+      - name: Notarize
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+            --apple-id "$APPLE_ID" --password "$APP_PASSWORD" --team-id "$TEAM_ID" \
+            --wait --output-format json | tee "$RUNNER_TEMP/notarization.json"
+          status="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$RUNNER_TEMP/notarization.json")"
+          if [ "$status" != "Accepted" ]; then
+            id="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$RUNNER_TEMP/notarization.json")"
+            xcrun notarytool log "$id" --apple-id "$APPLE_ID" --password "$APP_PASSWORD" --team-id "$TEAM_ID" || true
+            echo "::error::Notarization finished with status $status"
+            exit 1
+          fi
+          # Attach the ticket, so the app opens without a network check.
+          xcrun stapler staple "$APP"
+          xcrun stapler validate "$APP"
+          spctl --assess --type execute --verbose=2 "$APP"
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          ditto -c -k --keepParent "$APP" "dist/Strays-$VERSION.zip"
+          sha="$(shasum -a 256 "dist/Strays-$VERSION.zip" | cut -d' ' -f1)"
+          echo "SHA256=$sha" >> "$GITHUB_ENV"
+          scripts/render-cask.sh "$VERSION" "$sha" "$GITHUB_REPOSITORY" > dist/strays.rb
+          cat dist/strays.rb
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$TAG" "dist/Strays-$VERSION.zip" dist/strays.rb \
+            --title "Strays $VERSION" --generate-notes --verify-tag
+
+      - name: Update the Homebrew tap
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "::warning::TAP_GITHUB_TOKEN is not set, so the Homebrew tap was not updated. The cask is attached to the release as strays.rb."
+            exit 0
+          fi
+          tap="${GITHUB_REPOSITORY_OWNER}/homebrew-tap"
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/${tap}.git" "$RUNNER_TEMP/tap"
+          mkdir -p "$RUNNER_TEMP/tap/Casks"
+          cp dist/strays.rb "$RUNNER_TEMP/tap/Casks/strays.rb"
+          cd "$RUNNER_TEMP/tap"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/strays.rb
+          if git diff --cached --quiet; then
+            echo "The cask is already up to date."
+          else
+            git commit -m "strays $VERSION"
+            git push
+          fi
+
+      - name: Remove the signing keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
