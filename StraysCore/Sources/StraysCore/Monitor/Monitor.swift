@@ -270,7 +270,12 @@ public actor Monitor {
         }
         let sessions = agentIDs.reduce(into: [Int32: AgentSession]()) { result, pair in
             guard let entry = table[pair.key] else { return }
-            result[pair.key] = AgentSession(agentID: pair.value, identity: entry.identity, cwd: details[pair.key]?.cwd)
+            // A process that is on its way out is still listed for a moment
+            // after its working directory stops being readable. Keep the
+            // directory we saw before, or the orphans it leaves would lose
+            // their project.
+            let known = knownSessions[pair.key].flatMap { $0.identity == entry.identity ? $0.cwd : nil }
+            result[pair.key] = AgentSession(agentID: pair.value, identity: entry.identity, cwd: details[pair.key]?.cwd ?? known)
         }
         rememberSessions(sessions)
 
