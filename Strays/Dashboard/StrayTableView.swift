@@ -12,6 +12,8 @@ struct StrayTableView: View {
     private var sorted: [Stray] { strays.sorted(using: sortOrder) }
 
     var body: some View {
+        // Captured here because table cells cannot read the environment.
+        let catalog = model.catalog
         Table(sorted, selection: selection, sortOrder: $sortOrder) {
             TableColumn("Name", value: \.title) { stray in
                 HStack(spacing: 8) {
@@ -31,6 +33,11 @@ struct StrayTableView: View {
                     .lineLimit(1)
             }
             .width(min: 60, ideal: 88)
+
+            TableColumn("Origin", value: \.originSortKey) { stray in
+                AdaptiveOriginBadges(stray: stray, catalog: catalog)
+            }
+            .width(min: 70, ideal: 128)
 
             TableColumn("Ports", value: \.firstPortNumber) { stray in
                 PortChips(ports: stray.ports, limit: 2, tint: Theme.accent(for: stray) == Theme.neutral ? .secondary : Theme.accent(for: stray))

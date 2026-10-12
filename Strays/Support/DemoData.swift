@@ -5,7 +5,7 @@ import StraysCore
 /// nothing from a real machine ever ends up in a README image.
 enum DemoData {
     static var snapshot: StraysSnapshot {
-        StraysSnapshot(strays: strays, capturedAt: Date(), scanDuration: 0.014, isDockerAvailable: true, isBrewAvailable: true)
+        StraysSnapshot(strays: strays, capturedAt: Date(), scanDuration: 0.014, isDockerAvailable: true, isBrewAvailable: true, agentSessions: agentSessions)
     }
 
     /// Plausible-looking history so sparklines have something to draw.
@@ -36,6 +36,42 @@ enum DemoData {
     private static let python = DevClassification(runtimeID: "python", runtimeName: "Python", symbol: "chevron.left.forwardslash.chevron.right", isInterpreter: true)
 
     static var strays: [Stray] {
+        baseStrays.map { stray in
+            var stray = stray
+            switch stray.title {
+            case "next dev":
+                stray.origin = .agent(id: "claude-code", orphaned: false)
+                stray.agentSession = session("claude-code", pid: 47_990, project: shop)
+            case "tsc --watch":
+                stray.origin = .agent(id: "claude-code", orphaned: true)
+                stray.agentSession = session("claude-code", pid: 31_207, project: shop)
+            case "uvicorn app.main:app --reload":
+                stray.origin = .agent(id: "codex", orphaned: false)
+                stray.agentSession = session("codex", pid: 51_800, project: api)
+            case "celery -A tasks worker":
+                stray.origin = .terminal(name: "Ghostty")
+            case "python3 -m http.server 9000":
+                stray.isStale = true
+            default:
+                break
+            }
+            return stray
+        }
+    }
+
+    static var agentSessions: [AgentSession] {
+        [session("claude-code", pid: 47_990, project: shop), session("codex", pid: 51_800, project: api)]
+    }
+
+    private static func session(_ agent: String, pid: Int32, project: Project) -> AgentSession {
+        AgentSession(
+            agentID: agent,
+            identity: ProcessIdentity(pid: pid, startSeconds: UInt64(Date().addingTimeInterval(-9_000).timeIntervalSince1970), startMicroseconds: 0),
+            cwd: project.rootPath
+        )
+    }
+
+    private static var baseStrays: [Stray] {
         [
             dev(pid: 48_211, title: "next dev", runtime: node, project: shop, minutes: 134, cpu: 12.4, megabytes: 412,
                 ports: [port(3000, pid: 48_213)]),

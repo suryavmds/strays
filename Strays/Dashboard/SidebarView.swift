@@ -26,6 +26,14 @@ struct SidebarView: View {
                 }
             }
 
+            if !model.detectedAgents.isEmpty {
+                Section("Agents") {
+                    ForEach(model.detectedAgents) { agent in
+                        agentRow(agent)
+                    }
+                }
+            }
+
             Section("Services") {
                 row(.docker, "Docker", symbol: "shippingbox", count: model.containers.filter(\.isRunning).count, tint: Theme.docker)
                     .help(model.snapshot.isDockerAvailable ? "Containers, running and stopped" : "Docker is not running")
@@ -68,6 +76,38 @@ struct SidebarView: View {
         }
         .tag(item)
         .accessibilityLabel("\(title), \(count)")
+    }
+
+    /// One row per agent that is running or has left something behind.
+    private func agentRow(_ agent: DetectedAgent) -> some View {
+        Label {
+            HStack(spacing: 5) {
+                Text(agent.profile.displayName)
+                    .lineLimit(1)
+                Spacer()
+                if !agent.orphans.isEmpty {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Theme.brew)
+                        .help("\(agent.orphans.count) orphaned: the session that started them has exited")
+                }
+                Text(verbatim: "\(agent.strays.count)")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .contentTransition(.numericText())
+            }
+        } icon: {
+            Image(systemName: agent.profile.icon)
+                .foregroundStyle(agent.profile.color)
+        }
+        .tag(SidebarItem.agent(agent.id))
+        .help(agentHelp(agent))
+        .accessibilityLabel("\(agent.profile.displayName), \(agent.strays.count) running, \(agent.orphans.count) orphaned")
+    }
+
+    private func agentHelp(_ agent: DetectedAgent) -> String {
+        let sessions = agent.sessionCount == 1 ? "1 session running" : "\(agent.sessionCount) sessions running"
+        return "\(agent.profile.displayName): \(sessions), \(agent.strays.count) background processes"
     }
 
     private var footer: some View {

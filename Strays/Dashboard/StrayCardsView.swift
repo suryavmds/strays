@@ -103,6 +103,7 @@ struct StrayCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             header
+            badges
             ports
             footer
             ActivityPrompt(stray: stray)
@@ -189,6 +190,16 @@ struct StrayCard: View {
         } else {
             PortChips(ports: stray.ports, limit: 4, tint: accent == Theme.neutral ? .secondary : accent)
                 .frame(height: 20)
+        }
+    }
+
+    /// Where it came from, and whether it looks forgotten.
+    @ViewBuilder private var badges: some View {
+        if stray.isStale || !stray.origin.isUnknown {
+            HStack(spacing: 5) {
+                OriginBadge(origin: stray.origin, catalog: model.catalog)
+                if stray.isStale { StaleBadge() }
+            }
         }
     }
 

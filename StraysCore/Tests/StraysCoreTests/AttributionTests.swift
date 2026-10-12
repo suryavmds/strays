@@ -656,3 +656,102 @@ final class AgentAttributionLiveTests: XCTestCase {
         XCTAssertTrue(snapshot.agentSessions.isEmpty)
     }
 }
+
+final class StaleNotificationPlannerTests: XCTestCase {
+    private let calendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar
+    }()
+
+    /// 2026-10-12 09:00 UTC.
+    private let morning = Date(timeIntervalSince1970: 1_791_795_600)
+
+    private func stray(_ id: String, title: String? = nil, project: String? = nil, hours: Double = 8) -> Stray {
+        Stray(
+            id: id,
+            kind: .process(ProcessGroup(root: makeDetails(makeEntry(1)))),
+            category: .dev,
+            title: title ?? id,
+            project: project.map { Project(rootPath: "/p/\($0)", name: $0, marker: ".git") },
+            startedAt: morning.addingTimeInterval(-hours * 3_600),
+            isStale: true
+        )
+    }
+
+    func testDailySummaryIsSentOnceADay() {
+        var planner = StaleNotificationPlanner()
+        let stale = [stray("a"), stray("b")]
+
+        let first = planner.plan(stale: stale, now: morning, calendar: calendar)
+        XCTAssertEqual(first.count, 1)
+        XCTAssertEqual(first.first?.title, "2 things look forgotten")
+        XCTAssertEqual(first.first?.strayIDs, ["a", "b"])
+
+        for hour in 1...12 {
+            let later = morning.addingTimeInterval(Double(hour) * 3_600)
+            XCTAssertTrue(planner.plan(stale: stale + [stray("c")], now: later, calendar: calendar).isEmpty, "hour \(hour): already told today")
+        }
+        let tomorrow = morning.addingTimeInterval(24 * 3_600)
+        XCTAssertEqual(planner.plan(stale: stale, now: tomorrow, calendar: calendar).count, 1)
+    }
+
+    func testNothingStaleMeansNoNotificationAndTheDayIsNotUsedUp() {
+        var planner = StaleNotificationPlanner()
+        XCTAssertTrue(planner.plan(stale: [], now: morning, calendar: calendar).isEmpty)
+        XCTAssertEqual(planner.plan(stale: [stray("a")], now: morning.addingTimeInterval(60), calendar: calendar).count, 1)
+    }
+
+    func testSummaryOfOneReadsLikeASingleNotification() {
+        var planner = StaleNotificationPlanner()
+        let plan = planner.plan(stale: [stray("a", title: "next dev", project: "shop")], now: morning, calendar: calendar)
+        XCTAssertEqual(plan.first?.title, "next dev looks forgotten")
+        XCTAssertEqual(plan.first?.body, "Running in shop for 8h. It has done nothing for the last half hour.")
+    }
+
+    func testSummaryNamesAFewAndCountsTheRest() {
+        var planner = StaleNotificationPlanner()
+        let plan = planner.plan(stale: (1...5).map { stray("s\($0)") }, now: morning, calendar: calendar)
+        XCTAssertEqual(plan.first?.title, "5 things look forgotten")
+        XCTAssertEqual(plan.first?.body, "s1, s2, s3, and 2 more have been running for hours without doing anything.")
+        XCTAssertEqual(plan.first?.strayIDs.count, 5)
+    }
+
+    func testEachItemModeAnnouncesEveryStrayExactlyOnce() {
+        var planner = StaleNotificationPlanner(mode: .eachItem)
+        XCTAssertEqual(planner.plan(stale: [stray("a")], now: morning, calendar: calendar).map(\.id), ["stale:a"])
+        XCTAssertTrue(planner.plan(stale: [stray("a")], now: morning.addingTimeInterval(60), calendar: calendar).isEmpty)
+        XCTAssertEqual(planner.plan(stale: [stray("a"), stray("b")], now: morning.addingTimeInterval(120), calendar: calendar).map(\.id), ["stale:b"])
+    }
+
+    func testAStrayThatWokeUpAndWentStaleAgainIsAnnouncedAgain() {
+        var planner = StaleNotificationPlanner(mode: .eachItem)
+        _ = planner.plan(stale: [stray("a")], now: morning, calendar: calendar)
+        _ = planner.plan(stale: [], now: morning.addingTimeInterval(600), calendar: calendar)
+        XCTAssertEqual(planner.plan(stale: [stray("a")], now: morning.addingTimeInterval(7_200), calendar: calendar).count, 1)
+    }
+
+    func testSnoozedStraysStayQuietUntilTheSnoozeEnds() {
+        var planner = StaleNotificationPlanner(mode: .eachItem)
+        planner.snooze(["a"], until: morning.addingTimeInterval(3_600))
+        XCTAssertEqual(planner.plan(stale: [stray("a"), stray("b")], now: morning, calendar: calendar).map(\.strayIDs), [["b"]])
+        XCTAssertTrue(planner.plan(stale: [stray("a"), stray("b")], now: morning.addingTimeInterval(1_800), calendar: calendar).isEmpty)
+        XCTAssertEqual(planner.plan(stale: [stray("a"), stray("b")], now: morning.addingTimeInterval(3_700), calendar: calendar).map(\.strayIDs), [["a"]])
+    }
+
+    func testSnoozingEverythingSuppressesTheDailySummaryWithoutSpendingIt() {
+        var planner = StaleNotificationPlanner()
+        planner.snooze(["a"], until: morning.addingTimeInterval(3_600))
+        XCTAssertTrue(planner.plan(stale: [stray("a")], now: morning, calendar: calendar).isEmpty)
+        XCTAssertEqual(planner.plan(stale: [stray("a")], now: morning.addingTimeInterval(4_000), calendar: calendar).count, 1)
+    }
+
+    func testPlannerSurvivesARelaunch() throws {
+        var planner = StaleNotificationPlanner()
+        _ = planner.plan(stale: [stray("a")], now: morning, calendar: calendar)
+        planner.snooze(["b"], until: morning.addingTimeInterval(9_999))
+        var restored = try JSONDecoder().decode(StaleNotificationPlanner.self, from: JSONEncoder().encode(planner))
+        XCTAssertEqual(restored, planner)
+        XCTAssertTrue(restored.plan(stale: [stray("a")], now: morning.addingTimeInterval(60), calendar: calendar).isEmpty, "still the same day after a relaunch")
+    }
+}

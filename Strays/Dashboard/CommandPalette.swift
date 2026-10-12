@@ -182,6 +182,22 @@ struct CommandPalette: View {
                 })
             }
         }
+        for agent in model.detectedAgents {
+            commands.append(PaletteCommand(id: "go:agent:\(agent.id)", title: "Go to \(agent.profile.displayName)", subtitle: "Agent", symbol: agent.profile.icon, tint: agent.profile.color) {
+                state.sidebar = .agent(agent.id)
+            })
+        }
+        for filter in StrayFilter.allCases {
+            commands.append(PaletteCommand(id: "filter:\(filter.rawValue)", title: "Show Only \(filter.title)", subtitle: "Filter", symbol: filter.symbol) {
+                state.sidebar = .all
+                state.filters = [filter]
+            })
+        }
+        if !state.filters.isEmpty {
+            commands.append(PaletteCommand(id: "filter:clear", title: "Clear Filters", subtitle: nil, symbol: "line.3.horizontal.decrease.circle") {
+                state.filters.removeAll()
+            })
+        }
         for mode in DashboardViewMode.allCases {
             commands.append(PaletteCommand(id: "view:\(mode.rawValue)", title: "View as \(mode.title)", subtitle: nil, symbol: mode.symbol) {
                 state.viewMode = mode

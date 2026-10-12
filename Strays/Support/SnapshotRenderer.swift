@@ -64,6 +64,13 @@ enum SnapshotRenderer {
             state.selection = model.containers.first?.id
         }
         renderWindow(docker.environment(model), size: CGSize(width: 1180, height: 760), scheme: .dark, to: directory.appendingPathComponent("dashboard-docker-dark.png"))
+        let agent = DashboardView { state in
+            state.persistsViewMode = false
+            state.viewMode = .cards
+            state.sidebar = .agent("claude-code")
+            state.selection = model.orphanedStrays.first?.id
+        }
+        renderWindow(agent.environment(model), size: CGSize(width: 1180, height: 760), scheme: .dark, to: directory.appendingPathComponent("dashboard-agent-dark.png"))
         let palette = DashboardView { state in
             state.persistsViewMode = false
             state.viewMode = .cards

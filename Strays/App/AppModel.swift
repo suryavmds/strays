@@ -65,6 +65,16 @@ struct StrayGroup: Identifiable {
     }
 }
 
+/// An agent that has something to show: a running session, or strays it started.
+struct DetectedAgent: Identifiable {
+    let profile: AgentProfile
+    let strays: [Stray]
+    let sessionCount: Int
+
+    var id: String { profile.id }
+    var orphans: [Stray] { strays.filter(\.origin.isOrphaned) }
+}
+
 /// The single source of truth for both the menu bar popover and the dashboard.
 @MainActor
 @Observable
@@ -79,6 +89,13 @@ final class AppModel {
     var isPopoverVisible = false { didSet { updateCadence() } }
     var isDashboardVisible = false { didSet { updateCadence() } }
 
+    /// Agent, terminal, and IDE profiles, with the user's overrides applied.
+    let catalog: AgentCatalog
+    /// Set by a notification's default action, to open the dashboard on
+    /// what it was about.
+    var pendingDashboardFilter: StrayFilter?
+
+    @ObservationIgnored private var notifier: StaleNotifier?
     @ObservationIgnored private let monitor: Monitor?
     @ObservationIgnored private let controller = ProcessController()
     @ObservationIgnored private var survivors: [Stray.ID: [SignalTarget]] = [:]
@@ -89,15 +106,21 @@ final class AppModel {
 
     /// Live data from this Mac.
     init() {
-        monitor = Monitor()
+        let catalog = AgentCatalog.load()
+        self.catalog = catalog
+        let monitor = Monitor(agents: catalog)
+        self.monitor = monitor
+        Task { await monitor.setStaleThreshold(hours: Preferences.staleAfterHours) }
         observeSleep()
         subscribe()
         updateCadence()
+        startNotifier()
     }
 
     /// Fixed data, for previews, screenshots, and the `--demo` flag. Nothing
     /// on the machine is scanned or signalled.
     init(demo snapshot: StraysSnapshot) {
+        catalog = .bundled
         monitor = nil
         self.snapshot = snapshot
         hasLoaded = true
@@ -128,9 +151,27 @@ final class AppModel {
 
     var lanVisibleCount: Int { activeStrays.filter(\.isLANVisible).count }
 
-    /// Drives the dot on the menu bar icon: something was left behind by an
-    /// agent session that has since exited.
-    var needsAttention: Bool { snapshot.strays.contains { $0.origin.isOrphaned } }
+    /// Left behind by an agent session that has since exited.
+    var orphanedStrays: [Stray] { snapshot.strays.filter(\.origin.isOrphaned) }
+
+    /// Running for hours and idle for the last half hour.
+    var staleStrays: [Stray] { snapshot.strays.filter(\.isStale) }
+
+    /// Drives the dot on the menu bar icon.
+    var needsAttention: Bool { snapshot.strays.contains { $0.origin.isOrphaned || $0.isStale } }
+
+    /// One entry per agent that is running or has left something behind,
+    /// in the catalog's order.
+    var detectedAgents: [DetectedAgent] {
+        let byAgent = Dictionary(grouping: snapshot.strays.filter { $0.origin.agentID != nil }) { $0.origin.agentID ?? "" }
+        let sessions = Dictionary(grouping: snapshot.agentSessions, by: \.agentID)
+        return catalog.agents.compactMap { profile in
+            let strays = byAgent[profile.id] ?? []
+            let sessionCount = sessions[profile.id]?.count ?? 0
+            guard !strays.isEmpty || sessionCount > 0 else { return nil }
+            return DetectedAgent(profile: profile, strays: strays, sessionCount: sessionCount)
+        }
+    }
 
     /// Active strays grouped by project, the most recently active first.
     /// Things without a project are grouped by what they are.
@@ -189,6 +230,42 @@ final class AppModel {
         let alive = Set(snapshot.strays.map(\.id))
         activity = activity.filter { alive.contains($0.key) }
         survivors = survivors.filter { alive.contains($0.key) }
+        notifier?.update(stale: snapshot.strays.filter(\.isStale))
+    }
+
+    // MARK: - Notifications
+
+    private func startNotifier() {
+        let notifier = StaleNotifier()
+        notifier.stop = { [weak self] ids in
+            guard let self else { return }
+            for stray in self.snapshot.strays where ids.contains(stray.id) {
+                self.requestStop(stray)
+            }
+        }
+        notifier.review = { [weak self] in
+            self?.pendingDashboardFilter = .stale
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        self.notifier = notifier
+    }
+
+    /// Turns stale notifications on or off. Turning them on asks macOS for
+    /// permission; returns false if it was refused.
+    func setStaleNotifications(enabled: Bool) async -> Bool {
+        guard enabled else {
+            UserDefaults.standard.set(false, forKey: Preferences.Key.staleNotificationsEnabled)
+            return true
+        }
+        let granted = await notifier?.requestAuthorization() ?? false
+        UserDefaults.standard.set(granted, forKey: Preferences.Key.staleNotificationsEnabled)
+        return granted
+    }
+
+    func setStaleThreshold(hours: Double) {
+        UserDefaults.standard.set(hours, forKey: Preferences.Key.staleAfterHours)
+        guard let monitor else { return }
+        Task { await monitor.setStaleThreshold(hours: hours) }
     }
 
     private func updateCadence() {

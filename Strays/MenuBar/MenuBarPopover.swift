@@ -48,6 +48,15 @@ struct MenuBarPopover: View {
 
             Spacer()
 
+            if !model.orphanedStrays.isEmpty {
+                Label("\(model.orphanedStrays.count) orphaned", systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.brew)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Theme.brew.opacity(0.15), in: Capsule())
+                    .help("Left running by an AI agent session that has since exited")
+            }
             if model.lanVisibleCount > 0 {
                 Label("\(model.lanVisibleCount) on LAN", systemImage: "wifi.exclamationmark")
                     .font(.system(size: 10, weight: .semibold))
@@ -325,7 +334,11 @@ struct StrayRow: View {
             Spacer(minLength: 6)
 
             ZStack(alignment: .trailing) {
-                PortChips(ports: stray.ports, tint: accent == Theme.neutral ? .secondary : accent)
+                HStack(spacing: 5) {
+                    if stray.isStale { StaleBadge(isCompact: true) }
+                    OriginBadge(origin: stray.origin, catalog: model.catalog, isCompact: true)
+                    PortChips(ports: stray.ports, tint: accent == Theme.neutral ? .secondary : accent)
+                }
                     .opacity(showsActions ? 0 : 1)
                     .scaleEffect(showsActions ? 0.92 : 1, anchor: .trailing)
                 actions
@@ -364,6 +377,8 @@ struct StrayRow: View {
             parts.append("ports " + stray.ports.map { String($0.port) }.joined(separator: ", "))
         }
         if stray.isLANVisible { parts.append("visible on your network") }
+        if let origin = OriginPresentation(stray.origin, catalog: model.catalog) { parts.append(origin.label) }
+        if stray.isStale { parts.append("stale") }
         return parts.joined(separator: ", ")
     }
 }

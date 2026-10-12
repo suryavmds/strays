@@ -49,6 +49,13 @@ struct DashboardView: View {
         .animation(Theme.listSpring, value: model.toast)
         .background(WindowVisibilityReader { model.isDashboardVisible = $0 })
         .background(DashboardWindowTracker())
+        .onChange(of: model.pendingDashboardFilter, initial: true) {
+            // A stale notification was clicked: show what it was about.
+            guard let filter = model.pendingDashboardFilter else { return }
+            state.sidebar = .all
+            state.filters = [filter]
+            model.pendingDashboardFilter = nil
+        }
         .frame(minWidth: 900, minHeight: 540)
     }
 
@@ -84,6 +91,14 @@ struct DashboardView: View {
     @ViewBuilder private var emptyState: some View {
         if !state.searchText.trimmingCharacters(in: .whitespaces).isEmpty {
             ContentUnavailableView.search(text: state.searchText)
+        } else if !state.filters.isEmpty {
+            ContentUnavailableView {
+                Label("Nothing matches", systemImage: "line.3.horizontal.decrease.circle")
+            } description: {
+                Text("Nothing here is " + state.filters.map { $0.title.lowercased() }.sorted().joined(separator: " and ") + ".")
+            } actions: {
+                Button("Clear Filters") { state.filters.removeAll() }
+            }
         } else if state.sidebar == .docker {
             ContentUnavailableView(
                 model.snapshot.isDockerAvailable ? "No containers" : "Docker isn’t running",
@@ -121,6 +136,27 @@ struct DashboardView: View {
             }
             .pickerStyle(.segmented)
             .help("Switch between cards, a dense table, and today's timeline")
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Menu {
+                ForEach(StrayFilter.allCases) { filter in
+                    Toggle(isOn: Binding(
+                        get: { state.filters.contains(filter) },
+                        set: { isOn in
+                            if isOn { state.filters.insert(filter) } else { state.filters.remove(filter) }
+                        }
+                    )) {
+                        Label(filter.title, systemImage: filter.symbol)
+                    }
+                }
+                if !state.filters.isEmpty {
+                    Divider()
+                    Button("Clear Filters") { state.filters.removeAll() }
+                }
+            } label: {
+                Label("Filter", systemImage: state.filters.isEmpty ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+            }
+            .help(state.filters.isEmpty ? "Filter by LAN-visible, stale, orphaned, or unknown origin" : "Filtering: " + state.filters.map(\.title).sorted().joined(separator: ", "))
         }
         ToolbarItem(placement: .primaryAction) {
             Button {

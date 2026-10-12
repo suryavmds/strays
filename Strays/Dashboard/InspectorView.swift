@@ -49,6 +49,7 @@ private struct InspectorContent: View {
             actions
             ActivityPrompt(stray: stray)
             if stray.isRunning { charts }
+            if stray.category == .dev { originSection }
             if !stray.ports.isEmpty { portsSection }
             if let container = stray.container {
                 containerSection(container)
@@ -83,6 +84,7 @@ private struct InspectorContent: View {
                     Badge(text: stray.categoryLabel, color: accent)
                     if let subtitle = stray.subtitle { Badge(text: subtitle, color: .secondary) }
                     if stray.isLANVisible { Badge(text: "On LAN", color: Theme.lan, symbol: "wifi.exclamationmark") }
+                    if stray.isStale { StaleBadge() }
                 }
             }
             Spacer(minLength: 0)
@@ -157,6 +159,51 @@ private struct InspectorContent: View {
                     Spacer(minLength: 0)
                 }
             }
+        }
+    }
+
+    /// Who started it, and whether that session is still around.
+    private var originSection: some View {
+        InspectorSection(title: "Origin", symbol: "arrow.triangle.branch") {
+            if stray.origin.isUnknown {
+                Text("Unknown origin. No AI agent, terminal, or IDE is among its ancestors, and its environment carries no agent's marker.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                OriginBadge(origin: stray.origin, catalog: model.catalog)
+                Text(originExplanation)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let session = stray.agentSession {
+                    DetailRow(label: "Session", value: "PID \(session.pid)" + (stray.origin.isOrphaned ? " (exited)" : " (running)"))
+                    if let cwd = session.cwd {
+                        DetailRow(label: "Started in", value: (cwd as NSString).abbreviatingWithTildeInPath) { model.reveal(path: cwd) }
+                    }
+                }
+            }
+            if stray.isStale {
+                Label("Running for hours, and idle for the last half hour.", systemImage: "moon.zzz.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.brew)
+            }
+        }
+    }
+
+    private var originExplanation: String {
+        let name = stray.origin.agentID.flatMap { model.catalog.agent(withID: $0)?.displayName }
+        switch stray.origin {
+        case .agent(_, true):
+            return "The \(name ?? "agent") session that started this has exited. Nothing is watching it any more."
+        case .agent:
+            return "Started by \(name ?? "an AI agent")."
+        case let .terminal(terminal):
+            return "Started by you, from \(terminal)."
+        case let .ide(ide):
+            return "Started from \(ide): its terminal, a task, or its own agent. Strays cannot tell which."
+        case .unknown:
+            return ""
         }
     }
 
