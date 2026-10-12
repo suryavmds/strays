@@ -267,3 +267,37 @@ final class AppBundleTests: XCTestCase {
         XCTAssertNil(AppBundle.path(forExecutablePath: "/usr/sbin/httpd"))
     }
 }
+
+final class StraysFormatTests: XCTestCase {
+    func testDurations() {
+        XCTAssertEqual(StraysFormat.duration(0), "0s")
+        XCTAssertEqual(StraysFormat.duration(45), "45s")
+        XCTAssertEqual(StraysFormat.duration(60), "1m")
+        XCTAssertEqual(StraysFormat.duration(12 * 60 + 30), "12m")
+        XCTAssertEqual(StraysFormat.duration(3 * 3_600), "3h")
+        XCTAssertEqual(StraysFormat.duration(3 * 3_600 + 12 * 60), "3h 12m")
+        XCTAssertEqual(StraysFormat.duration(2 * 86_400 + 4 * 3_600 + 59), "2d 4h")
+        XCTAssertEqual(StraysFormat.duration(86_400), "1d")
+        XCTAssertEqual(StraysFormat.duration(-5), "0s")
+    }
+
+    func testUptime() {
+        let now = Date(timeIntervalSince1970: 10_000)
+        XCTAssertEqual(StraysFormat.uptime(since: now.addingTimeInterval(-7_260), now: now), "2h 1m")
+        XCTAssertEqual(StraysFormat.uptime(since: nil, now: now), "–")
+    }
+
+    func testMemory() {
+        XCTAssertEqual(StraysFormat.memory(0), "0 KB")
+        XCTAssertEqual(StraysFormat.memory(800 * 1_024), "800 KB")
+        XCTAssertEqual(StraysFormat.memory(312 * 1_048_576), "312 MB")
+        XCTAssertEqual(StraysFormat.memory(1_500 * 1_048_576), "1.5 GB")
+    }
+
+    func testCPU() {
+        XCTAssertEqual(StraysFormat.cpu(0), "0%")
+        XCTAssertEqual(StraysFormat.cpu(1.23), "1.2%")
+        XCTAssertEqual(StraysFormat.cpu(48.4), "48%")
+        XCTAssertEqual(StraysFormat.cpu(212), "212%")
+    }
+}
