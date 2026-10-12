@@ -5,13 +5,24 @@ import XCTest
 
 /// A process the tests start themselves and always clean up. Tests never
 /// touch anything they did not spawn.
+///
+/// Liveness is tracked by PID and start time rather than through
+/// `Process.isRunning` or `waitUntilExit()`: Foundation ties its exit
+/// monitoring to the run loop of the launching thread, and an async test
+/// resumes on whichever thread is free.
 final class ThrowawayProcess {
     static let python = "/usr/bin/python3"
 
     private let process = Process()
+    private let identity: ProcessIdentity?
 
-    var pid: Int32 { process.processIdentifier }
-    var isRunning: Bool { process.isRunning }
+    let pid: Int32
+
+    /// True while the PID still belongs to the process we spawned.
+    var isRunning: Bool {
+        guard let identity else { return false }
+        return LibProc.entry(for: pid)?.identity == identity
+    }
 
     init(
         _ executable: String,
@@ -26,7 +37,12 @@ final class ThrowawayProcess {
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
+        // A termination handler makes Foundation reap the child from a
+        // dispatch source instead of a run loop.
+        process.terminationHandler = { _ in }
         try process.run()
+        pid = process.processIdentifier
+        identity = LibProc.entry(for: pid)?.identity
     }
 
     /// `python3 -m http.server` bound to loopback on the given port.
@@ -49,13 +65,15 @@ final class ThrowawayProcess {
         try ThrowawayProcess(python, ["-c", "import time; time.sleep(60)"], cwd: cwd, environment: environment)
     }
 
+    /// SIGTERM, then SIGKILL if it is still there two seconds later. Only
+    /// ever signals the exact process this object spawned.
     func stop() {
-        guard process.isRunning else { return }
-        process.terminate()
-        let deadline = Date().addingTimeInterval(2)
-        while process.isRunning, Date() < deadline { usleep(20_000) }
-        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-        process.waitUntilExit()
+        for signal in [SIGTERM, SIGKILL] {
+            guard isRunning else { return }
+            kill(pid, signal)
+            let deadline = Date().addingTimeInterval(2)
+            while isRunning, Date() < deadline { usleep(20_000) }
+        }
     }
 
     deinit { stop() }

@@ -67,7 +67,9 @@ enum LibProc {
 
     private static func entry(from info: kinfo_proc) -> ProcessEntry? {
         let pid = info.kp_proc.p_pid
-        guard pid > 0 else { return nil }
+        // A zombie has exited and only awaits its parent's wait(); it holds
+        // no ports or memory and cannot be signalled, so it is not running.
+        guard pid > 0, info.kp_proc.p_stat != zombieState else { return nil }
         let start = info.kp_proc.p_starttime
         return ProcessEntry(
             identity: ProcessIdentity(
@@ -151,6 +153,9 @@ enum LibProc {
     }
 
     // MARK: - Helpers
+
+    /// SZOMB from <sys/proc.h>.
+    private static let zombieState: CChar = 5
 
     private static let argumentMaximum: Int = {
         var mib: [Int32] = [CTL_KERN, KERN_ARGMAX]
