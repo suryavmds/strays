@@ -15,7 +15,12 @@ public actor ProcessInspector {
         /// The kernel's process name when we read the facts. It changes on
         /// exec, which is our cue to read them again.
         var name: String
+        var readAt: UInt64
     }
+
+    /// A process can exec a program with the same name (`sh -c 'exec sh …'`),
+    /// which the name check misses. Re-reading now and then catches it.
+    private static let factsLifetime: UInt64 = 30 * 1_000_000_000
 
     private struct CPUSample {
         var cpuTimeNanoseconds: UInt64
@@ -68,7 +73,7 @@ public actor ProcessInspector {
     // MARK: - Private
 
     private func details(for entry: ProcessEntry, uptime: UInt64) -> ProcessDetails {
-        let facts = facts(for: entry)
+        let facts = facts(for: entry, uptime: uptime)
         let task = LibProc.taskInfo(for: entry.pid)
         let isInspectable = task != nil || !facts.arguments.isEmpty
 
@@ -85,8 +90,9 @@ public actor ProcessInspector {
         )
     }
 
-    private func facts(for entry: ProcessEntry) -> StaticFacts {
-        if let cached = staticFacts[entry.identity], cached.name == entry.name {
+    private func facts(for entry: ProcessEntry, uptime: UInt64) -> StaticFacts {
+        if let cached = staticFacts[entry.identity], cached.name == entry.name,
+           uptime &- cached.readAt < Self.factsLifetime {
             return cached
         }
         let parsed = LibProc.rawArguments(for: entry.pid).flatMap(ProcArgsParser.parse)
@@ -95,7 +101,8 @@ public actor ProcessInspector {
             executablePath: path?.isEmpty == false ? path : nil,
             arguments: parsed?.arguments ?? [],
             environment: parsed?.environment ?? [:],
-            name: entry.name
+            name: entry.name,
+            readAt: uptime
         )
         staticFacts[entry.identity] = facts
         return facts

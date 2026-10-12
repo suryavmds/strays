@@ -224,6 +224,27 @@ final class CommandSummaryTests: XCTestCase {
         XCTAssertEqual(title(["node", "--inspect", "--max-old-space-size=4096", "/a/node_modules/.bin/tsc", "--watch"]), "tsc --watch")
     }
 
+    func testInterpreterFlagsAreNotPartOfTheName() {
+        XCTAssertEqual(
+            title(["node", "--env-file=.env.local", "--env-file=../api/.env", "/private/tmp/x/audit-strict.js", "/Users/me/shop", "/private/tmp/x/audit-strict.json"]),
+            "node audit-strict.js shop audit-strict.json"
+        )
+        XCTAssertEqual(title(["node", "--inspect", "server.js", "--port", "3000"]), "node server.js --port 3000")
+        XCTAssertEqual(title(["ruby", "-w", "script.rb"]), "ruby script.rb")
+        XCTAssertEqual(title(["node", "--inspect"]), "node")
+    }
+
+    func testInlineCodeIsElided() {
+        XCTAssertEqual(title(["/usr/bin/python3", "-c", "import time; time.sleep(60)"]), "python3 -c …")
+        XCTAssertEqual(title(["node", "-e", "require('http').createServer().listen(0)"]), "node -e …")
+    }
+
+    func testVeryLongTitlesAreCut() {
+        let long = title(["tool", String(repeating: "a", count: 200)], interpreter: false)
+        XCTAssertEqual(long.count, 64)
+        XCTAssertTrue(long.hasSuffix("…"))
+    }
+
     func testOwnScriptsKeepTheInterpreter() {
         XCTAssertEqual(title(["node", "server.js"]), "node server.js")
         XCTAssertEqual(title(["/usr/bin/python3", "-m", "http.server", "8000"]), "python3 -m http.server 8000")

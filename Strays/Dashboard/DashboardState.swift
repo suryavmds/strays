@@ -1,0 +1,162 @@
+import SwiftUI
+import StraysCore
+
+/// What the sidebar can show.
+enum SidebarItem: Hashable {
+    case all
+    /// Everything with a port, ordered by port number.
+    case ports
+    case project(String)
+    /// Apps and system daemons that listen on a port.
+    case others
+}
+
+enum DashboardViewMode: String, CaseIterable, Identifiable {
+    case cards
+    case table
+    case timeline
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .cards: "Cards"
+        case .table: "Table"
+        case .timeline: "Timeline"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .cards: "square.grid.2x2"
+        case .table: "tablecells"
+        case .timeline: "chart.bar.xaxis"
+        }
+    }
+}
+
+/// A titled run of strays in the main area.
+struct StraySection: Identifiable {
+    let id: String
+    let title: String
+    let symbol: String
+    let project: Project?
+    let strays: [Stray]
+}
+
+/// The dashboard window's own state: where the user is and what they picked.
+@MainActor
+@Observable
+final class DashboardState {
+    private static let viewModeKey = "dashboardViewMode"
+
+    var sidebar: SidebarItem = .all
+    var selection: Stray.ID?
+    var searchText = ""
+    var isPaletteOpen = false
+    var isInspectorOpen = true
+
+    var viewMode: DashboardViewMode {
+        didSet {
+            guard persistsViewMode else { return }
+            UserDefaults.standard.set(viewMode.rawValue, forKey: Self.viewModeKey)
+        }
+    }
+
+    /// Off for previews and snapshots, which must not change the user's choice.
+    @ObservationIgnored var persistsViewMode = true
+
+    init() {
+        let stored = UserDefaults.standard.string(forKey: Self.viewModeKey)
+        viewMode = stored.flatMap(DashboardViewMode.init(rawValue:)) ?? .cards
+    }
+
+    func select(_ stray: Stray) {
+        selection = stray.id
+        isInspectorOpen = true
+    }
+
+    func title(in model: AppModel) -> String {
+        switch sidebar {
+        case .all: "All"
+        case .ports: "Listening Ports"
+        case .others: "Apps & System"
+        case let .project(id): model.projectGroups.first { $0.id == id }?.title ?? "Project"
+        }
+    }
+
+    /// The strays the current sidebar item and search text leave visible,
+    /// already split into sections.
+    func sections(in model: AppModel) -> [StraySection] {
+        let sections: [StraySection]
+        switch sidebar {
+        case .all:
+            var result = model.projectGroups.map(Self.section(for:))
+            if !model.otherListeners.isEmpty {
+                result.append(StraySection(id: "others", title: "Apps & System", symbol: "macwindow.on.rectangle", project: nil, strays: model.otherListeners))
+            }
+            sections = result
+        case .ports:
+            let listening = model.snapshot.strays
+                .filter { !$0.ports.isEmpty }
+                .sorted { ($0.primaryPort?.port ?? 0) < ($1.primaryPort?.port ?? 0) }
+            sections = [StraySection(id: "ports", title: "By port number", symbol: "point.3.connected.trianglepath.dotted", project: nil, strays: listening)]
+        case .others:
+            sections = [StraySection(id: "others", title: "Apps & System", symbol: "macwindow.on.rectangle", project: nil, strays: model.otherListeners)]
+        case let .project(id):
+            sections = model.projectGroups.filter { $0.id == id }.map(Self.section(for:))
+        }
+
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return sections.filter { !$0.strays.isEmpty } }
+        return sections.compactMap { section in
+            let matching = section.strays.filter { $0.matches(query: query) }
+            return matching.isEmpty ? nil : StraySection(id: section.id, title: section.title, symbol: section.symbol, project: section.project, strays: matching)
+        }
+    }
+
+    func visibleStrays(in model: AppModel) -> [Stray] {
+        sections(in: model).flatMap(\.strays)
+    }
+
+    private static func section(for group: StrayGroup) -> StraySection {
+        StraySection(
+            id: group.id,
+            title: group.title,
+            symbol: group.project == nil ? "questionmark.folder" : "folder.fill",
+            project: group.project,
+            strays: group.strays
+        )
+    }
+}
+
+// Sort keys for the table, which needs non-optional comparable values.
+extension Stray {
+    var projectName: String { project?.name ?? "" }
+    var firstPortNumber: Int { primaryPort.map { Int($0.port) } ?? Int.max }
+    var rootPID: Int32 { processGroup?.root.pid ?? 0 }
+    var startDate: Date { startedAt ?? .distantPast }
+    var memoryMegabytes: Double { Double(memoryBytes) / 1_048_576 }
+
+    /// The SF Symbol that stands for this stray's runtime or kind.
+    var symbol: String {
+        if let symbol = processGroup?.runtime?.symbol { return symbol }
+        switch category {
+        case .dev: return "terminal"
+        case .app: return "macwindow"
+        case .system: return "gearshape.2"
+        case .docker: return "shippingbox"
+        case .brew: return "mug"
+        }
+    }
+
+    var categoryLabel: String {
+        switch category {
+        case .dev: "Dev process"
+        case .app: "App"
+        case .system: "System"
+        case .docker: "Docker"
+        case .brew: "Brew service"
+        }
+    }
+}

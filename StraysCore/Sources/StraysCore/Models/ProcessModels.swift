@@ -98,6 +98,10 @@ public struct ProcessTable: Sendable {
 
 /// Everything we know about one process. Fields are empty or nil when the
 /// kernel refuses to tell us (another user's process, or root's).
+///
+/// The environment is also empty for Apple's own system binaries (`/bin/zsh`,
+/// `/usr/bin/ruby`, …): macOS reveals their arguments but not their
+/// environment, even to the same user.
 public struct ProcessDetails: Sendable, Equatable, Identifiable {
     public let entry: ProcessEntry
     public var executablePath: String?

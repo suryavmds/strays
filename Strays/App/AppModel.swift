@@ -37,6 +37,8 @@ final class AppModel {
     private(set) var hasLoaded = false
     private(set) var activity: [Stray.ID: StrayActivity] = [:]
     private(set) var toast: Toast?
+    /// Recent CPU and memory per stray, for sparklines.
+    private(set) var history = MetricsHistory()
 
     var isPopoverVisible = false { didSet { updateCadence() } }
     var isDashboardVisible = false { didSet { updateCadence() } }
@@ -62,6 +64,7 @@ final class AppModel {
         monitor = nil
         self.snapshot = snapshot
         hasLoaded = true
+        history = DemoData.history(for: snapshot)
     }
 
     var isDemo: Bool { monitor == nil }
@@ -114,6 +117,7 @@ final class AppModel {
     private func receive(_ snapshot: StraysSnapshot) {
         self.snapshot = snapshot
         hasLoaded = true
+        history.record(snapshot)
         // Forget transient state for strays that are gone.
         let alive = Set(snapshot.strays.map(\.id))
         activity = activity.filter { alive.contains($0.key) }
@@ -152,6 +156,9 @@ final class AppModel {
     func requestStop(_ stray: Stray) {
         guard let policy = stray.stopPolicy else { return }
         switch policy {
+        case .allowed where stray.category == .app:
+            // Stopping an app means quitting it, unsaved work and all.
+            activity[stray.id] = .confirming(reason: "This quits \(stray.title).")
         case .allowed:
             stop(stray)
         case let .needsConfirmation(reason):
@@ -217,6 +224,35 @@ final class AppModel {
         refresh()
     }
 
+    /// Experimental: stops the tree, then runs the root's original command
+    /// line again in its original working directory.
+    func restart(_ stray: Stray) {
+        guard let group = stray.processGroup, let root = stray.signalRoot else { return }
+        guard !isDemo else { return showToast("arrow.clockwise.circle", "Demo mode: nothing was restarted") }
+        guard case .allowed = StopPolicy.evaluate(root) else { return requestStop(stray) }
+        activity[stray.id] = .stopping
+
+        let targets = controller.tree(of: root)
+        guard !targets.isEmpty else {
+            activity[stray.id] = nil
+            return refresh()
+        }
+        Task {
+            let result = await controller.stop(targets)
+            guard result.survivors.isEmpty, !result.exited.isEmpty else {
+                return finishStop(of: stray, with: result, forced: false)
+            }
+            activity[stray.id] = nil
+            do {
+                try ProcessLauncher.relaunch(group.root)
+                showToast("arrow.clockwise.circle.fill", "Restarted \(stray.title)")
+            } catch {
+                showToast("exclamationmark.triangle.fill", "Stopped \(stray.title), but could not start it again")
+            }
+            refresh()
+        }
+    }
+
     private static func explain(_ reason: StopResult.SkipReason) -> String {
         switch reason {
         case let .protected(why): why
@@ -257,5 +293,27 @@ final class AppModel {
 
     func reveal(_ project: Project) {
         SystemActions.revealInFinder(project.rootPath)
+    }
+
+    func reveal(path: String) {
+        SystemActions.revealInFinder(path)
+    }
+
+    /// The folder that "open in editor" and "terminal here" act on.
+    func workingFolder(of stray: Stray) -> String? {
+        stray.project?.rootPath ?? stray.processGroup?.root.cwd
+    }
+
+    func openInEditor(_ stray: Stray) {
+        guard let folder = workingFolder(of: stray) else { return }
+        guard let editor = CodeEditor.preferred else {
+            return showToast("questionmark.app", "No supported editor found (VS Code, Cursor, Zed, Xcode)")
+        }
+        SystemActions.open(folder: folder, with: editor)
+    }
+
+    func openTerminal(at stray: Stray) {
+        guard let folder = stray.processGroup?.root.cwd ?? stray.project?.rootPath else { return }
+        SystemActions.openTerminal(at: folder)
     }
 }

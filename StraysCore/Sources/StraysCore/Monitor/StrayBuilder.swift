@@ -11,19 +11,23 @@ public struct ProcessScan: Sendable {
     public var devProcesses: [Int32: DevClassification]
     /// PIDs that tree-building must not climb past.
     public var boundaries: Set<Int32>
+    /// For processes inside an app bundle: the app's main process.
+    public var appRoots: [Int32: Int32]
 
     public init(
         table: ProcessTable,
         ports: [ListeningPort],
         details: [Int32: ProcessDetails],
         devProcesses: [Int32: DevClassification],
-        boundaries: Set<Int32> = []
+        boundaries: Set<Int32> = [],
+        appRoots: [Int32: Int32] = [:]
     ) {
         self.table = table
         self.ports = ports
         self.details = details
         self.devProcesses = devProcesses
         self.boundaries = boundaries
+        self.appRoots = appRoots
     }
 }
 
@@ -55,21 +59,31 @@ public struct StrayBuilder: Sendable {
             .subtracting(excludedPIDs)
             .filter { scan.table[$0] != nil }
 
-        let roots = ProcessGrouper.roots(
+        var roots = ProcessGrouper.roots(
             of: interesting,
             absorbing: devPIDs.subtracting(excludedPIDs),
             boundaries: scan.boundaries.union(excludedPIDs),
             in: scan.table
         )
+        // A listener that no dev tree claimed, and that lives in an app
+        // bundle, is filed under that app's main process.
+        for pid in interesting where roots[pid] == pid && !devPIDs.contains(pid) {
+            if let appRoot = scan.appRoots[pid], scan.table[appRoot] != nil, !excludedPIDs.contains(appRoot) {
+                roots[pid] = appRoot
+            }
+        }
+        let membersByRoot = Dictionary(grouping: roots.keys.sorted(), by: { roots[$0] ?? $0 })
 
-        return Set(roots.values).compactMap { rootPID -> Stray? in
+        return membersByRoot.compactMap { rootPID, members -> Stray? in
             guard let rootEntry = scan.table[rootPID] else { return nil }
-            let isDev = devPIDs.contains(rootPID)
-            // Only a dev process owns its whole subtree. An app that listens
-            // on a port is shown alone: its children are its own business.
-            let descendantEntries = isDev ? scan.table.descendants(of: rootPID) : []
+            // A dev process owns its whole subtree. An app is its main
+            // process plus the helpers that hold its ports; whatever else it
+            // spawned is its own business.
+            let memberEntries = devPIDs.contains(rootPID)
+                ? scan.table.descendants(of: rootPID)
+                : members.filter { $0 != rootPID }.compactMap { scan.table[$0] }
             let root = scan.details[rootPID] ?? ProcessDetails(entry: rootEntry, isInspectable: false)
-            let descendants = descendantEntries.map { scan.details[$0.pid] ?? ProcessDetails(entry: $0, isInspectable: false) }
+            let descendants = memberEntries.map { scan.details[$0.pid] ?? ProcessDetails(entry: $0, isInspectable: false) }
             let group = ProcessGroup(root: root, descendants: descendants, runtime: scan.devProcesses[rootPID])
             return makeStray(group: group, portsByPID: portsByPID)
         }
@@ -111,7 +125,10 @@ public struct StrayBuilder: Sendable {
     private func naming(for group: ProcessGroup) -> (title: String, subtitle: String?) {
         let root = group.root
         if group.runtime == nil, let path = root.executablePath, let app = AppBundle.name(forExecutablePath: path) {
-            return (app, root.executableName == app ? nil : root.executableName)
+            // Name the helper only when it is the whole item; an app with
+            // several listening helpers is simply the app.
+            let helper = group.descendants.isEmpty && root.executableName != app ? root.executableName : nil
+            return (app, helper)
         }
         let title = CommandSummary.title(
             arguments: root.arguments,

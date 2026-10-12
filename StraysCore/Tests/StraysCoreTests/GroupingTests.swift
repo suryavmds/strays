@@ -163,6 +163,63 @@ final class StrayBuilderTests: XCTestCase {
         XCTAssertEqual(stray.processGroup?.members.map(\.pid), [40], "an app's children are not part of the item")
     }
 
+    func testSeveralListeningHelpersOfOneAppAreOneStray() throws {
+        let app = "/Applications/Visual Studio Code.app/Contents"
+        let main = makeDetails(makeEntry(40, name: "Electron", uid: me, start: 900), path: "\(app)/MacOS/Electron", memory: 300)
+        let plugin = makeDetails(makeEntry(41, parent: 40, name: "Code Helper (Plu", uid: me), path: "\(app)/Frameworks/Code Helper (Plugin).app/Contents/MacOS/Code Helper (Plugin)", memory: 60)
+        let helper = makeDetails(makeEntry(42, parent: 40, name: "Code Helper", uid: me), path: "\(app)/Frameworks/Code Helper.app/Contents/MacOS/Code Helper", memory: 40)
+        let silent = makeDetails(makeEntry(43, parent: 40, name: "Code Helper (GPU", uid: me), path: "\(app)/Frameworks/Code Helper (GPU).app/Contents/MacOS/Code Helper (GPU)", memory: 500)
+        let all = [main, plugin, helper, silent]
+        let paths = Dictionary(uniqueKeysWithValues: all.map { ($0.pid, $0.executablePath!) })
+        let table = ProcessTable(entries: all.map(\.entry))
+
+        var input = scan(all, ports: [
+            ListeningPort(pid: 41, port: 57482, transport: .tcp, address: "127.0.0.1"),
+            ListeningPort(pid: 42, port: 49678, transport: .tcp, address: "127.0.0.1"),
+        ])
+        input.appRoots = ProcessGrouper.appRoots(of: [41, 42], executablePaths: paths, in: table)
+
+        let strays = builder.build(from: input)
+        XCTAssertEqual(strays.count, 1)
+        let stray = try XCTUnwrap(strays.first)
+        XCTAssertEqual(stray.title, "Visual Studio Code")
+        XCTAssertNil(stray.subtitle)
+        XCTAssertEqual(stray.processGroup?.root.pid, 40, "the app's main process is what Stop is aimed at")
+        XCTAssertEqual(stray.processGroup?.members.map(\.pid), [40, 41, 42], "helpers without a port stay out of it")
+        XCTAssertEqual(stray.ports.map(\.port), [49678, 57482])
+        XCTAssertEqual(stray.memoryBytes, 400)
+        XCTAssertEqual(stray.startedAt, Date(timeIntervalSince1970: 900))
+    }
+
+    func testAppRootStopsAtTheBundleBoundary() {
+        let entries = [
+            makeEntry(1, parent: 0, name: "launchd", uid: 0),
+            makeEntry(10, parent: 1, name: "Terminal"),
+            makeEntry(11, parent: 10, name: "Electron"),
+            makeEntry(12, parent: 11, name: "Code Helper"),
+            makeEntry(20, parent: 1, name: "redis-server"),
+        ]
+        let paths: [Int32: String] = [
+            1: "/sbin/launchd",
+            10: "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal",
+            11: "/Applications/Visual Studio Code.app/Contents/MacOS/Electron",
+            12: "/Applications/Visual Studio Code.app/Contents/Frameworks/Code Helper.app/Contents/MacOS/Code Helper",
+            20: "/opt/homebrew/bin/redis-server",
+        ]
+        let roots = ProcessGrouper.appRoots(of: [12, 20], executablePaths: paths, in: ProcessTable(entries: entries))
+        XCTAssertEqual(roots, [12: 11], "climbs to the app's own main process and no further; plain binaries are skipped")
+    }
+
+    func testDevTreeInsideAnAppIsNotSwallowedByTheApp() throws {
+        // A dev server started from VS Code's terminal, with a port of its own.
+        let electron = makeDetails(makeEntry(40, name: "Electron", uid: me), path: "/Applications/Visual Studio Code.app/Contents/MacOS/Electron")
+        let shell = makeDetails(makeEntry(41, parent: 40, name: "zsh", uid: me), path: "/bin/zsh")
+        let server = makeDetails(makeEntry(42, parent: 41, name: "node", uid: me), path: "/usr/local/bin/node", arguments: ["node", "server.js"], cwd: project)
+        let strays = builder.build(from: scan([electron, shell, server], ports: [ListeningPort(pid: 42, port: 3000, transport: .tcp, address: "127.0.0.1")], dev: [42]))
+        XCTAssertEqual(strays.map(\.title), ["node server.js"])
+        XCTAssertEqual(strays.first?.category, .dev)
+    }
+
     func testOtherUsersListenersAreSystemItems() throws {
         let daemon = makeDetails(makeEntry(50, name: "httpd", uid: 0), path: "/usr/sbin/httpd", isInspectable: false)
         let stray = try XCTUnwrap(builder.build(from: scan([daemon], ports: [ListeningPort(pid: 50, port: 80, transport: .tcp, address: "*")])).first)

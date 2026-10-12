@@ -134,9 +134,11 @@ public actor Monitor {
             classifier.runtime(forExecutablePath: paths[$0.pid], name: $0.name) != nil
         }
 
-        // Phase 2: full details for those and for everything with a port.
+        // Phase 2: full details for those, for everything with a port, and
+        // for the main process of any app a listener belongs to.
         let listenerPIDs = Set(listening.map(\.pid))
-        var wanted = Set(runtimeCandidates.map(\.pid)).union(listenerPIDs)
+        let appRoots = ProcessGrouper.appRoots(of: listenerPIDs, executablePaths: paths, in: table)
+        var wanted = Set(runtimeCandidates.map(\.pid)).union(listenerPIDs).union(appRoots.values)
         var details = await inspector.details(for: wanted.compactMap { table[$0] })
 
         let now = Date()
@@ -157,6 +159,6 @@ public actor Monitor {
             details.merge(await inspector.details(for: missing)) { current, _ in current }
         }
 
-        return ProcessScan(table: table, ports: listening, details: details, devProcesses: devProcesses)
+        return ProcessScan(table: table, ports: listening, details: details, devProcesses: devProcesses, appRoots: appRoots)
     }
 }

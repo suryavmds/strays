@@ -13,7 +13,8 @@ struct StraysApp: App {
     init() {
         // `--demo` shows made-up data and never scans or signals anything.
         let arguments = CommandLine.arguments
-        let isDemo = arguments.contains("--demo") || arguments.contains("--render-snapshots")
+        let rendersDemoSnapshots = arguments.contains("--render-snapshots") && !arguments.contains("--live")
+        let isDemo = arguments.contains("--demo") || rendersDemoSnapshots
         _model = State(initialValue: isDemo ? AppModel(demo: DemoData.snapshot) : AppModel())
     }
 
@@ -30,7 +31,7 @@ struct StraysApp: App {
             DashboardView()
                 .environment(model)
         }
-        .defaultSize(width: 1080, height: 700)
+        .defaultSize(width: 1180, height: 760)
     }
 }
 

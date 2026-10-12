@@ -21,6 +21,8 @@ struct PortChip: View {
                     .opacity(0.7)
             }
         }
+        .lineLimit(1)
+        .fixedSize()
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
         .foregroundStyle(port.isLANVisible ? Theme.lan : tint)
@@ -50,21 +52,34 @@ struct PortChip: View {
     }
 }
 
-/// The first few ports of a stray, then a count of the rest.
+/// As many of a stray's ports as fit, then a count of the rest.
 struct PortChips: View {
     let ports: [PortSummary]
     var limit = 2
     var tint: Color = Theme.dev
 
     var body: some View {
+        let most = min(limit, ports.count)
+        if most > 0 {
+            ViewThatFits(in: .horizontal) {
+                ForEach((1...most).reversed(), id: \.self) { count in
+                    row(showing: count)
+                }
+            }
+        }
+    }
+
+    private func row(showing count: Int) -> some View {
         HStack(spacing: 4) {
-            ForEach(ports.prefix(limit)) { port in
+            ForEach(ports.prefix(count)) { port in
                 PortChip(port: port, tint: tint)
             }
-            if ports.count > limit {
-                Text(verbatim: "+\(ports.count - limit)")
+            if ports.count > count {
+                Text(verbatim: "+\(ports.count - count)")
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(.secondary)
+                    .fixedSize()
+                    .help(ports.dropFirst(count).map { ":\($0.port)" }.joined(separator: "  "))
             }
         }
     }

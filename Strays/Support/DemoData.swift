@@ -8,6 +8,26 @@ enum DemoData {
         StraysSnapshot(strays: strays, capturedAt: Date(), scanDuration: 0.014)
     }
 
+    /// Plausible-looking history so sparklines have something to draw.
+    static func history(for snapshot: StraysSnapshot) -> MetricsHistory {
+        var history = MetricsHistory()
+        let now = Date()
+        for step in 0..<60 {
+            var frame = snapshot
+            frame.capturedAt = now.addingTimeInterval(Double(step - 60) * 2)
+            frame.strays = snapshot.strays.enumerated().map { index, stray in
+                var copy = stray
+                let wave = sin(Double(step) / 5 + Double(index)) * 0.5 + 0.5
+                let spike = (step + index * 7) % 23 == 0 ? 2.2 : 1
+                copy.cpuPercent = stray.cpuPercent * (0.35 + wave) * spike
+                copy.memoryBytes = UInt64(Double(stray.memoryBytes) * (0.9 + Double(step) / 600))
+                return copy
+            }
+            history.record(frame)
+        }
+        return history
+    }
+
     private static let home = "/Users/dev"
     private static let shop = Project(rootPath: "\(home)/code/shop", name: "shop", marker: "package.json")
     private static let api = Project(rootPath: "\(home)/code/shop-api", name: "shop-api", marker: "pyproject.toml")

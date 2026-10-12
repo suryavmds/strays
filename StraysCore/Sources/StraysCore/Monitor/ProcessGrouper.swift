@@ -33,4 +33,30 @@ public enum ProcessGrouper {
         }
         return result
     }
+
+    /// Maps each PID to the main process of the app it belongs to: the
+    /// topmost ancestor whose executable lives in the same `.app` bundle.
+    ///
+    /// An app is one thing to its user, however many helper processes hold
+    /// its ports: three "Code Helper" listeners are just Visual Studio Code.
+    /// PIDs that are not inside a bundle are left out.
+    public static func appRoots(
+        of pids: some Sequence<Int32>,
+        executablePaths: [Int32: String],
+        in table: ProcessTable
+    ) -> [Int32: Int32] {
+        var result: [Int32: Int32] = [:]
+        for pid in pids {
+            guard let path = executablePaths[pid], let bundle = AppBundle.path(forExecutablePath: path) else { continue }
+            var root = pid
+            for ancestor in table.ancestors(of: pid) {
+                guard let ancestorPath = executablePaths[ancestor.pid],
+                      AppBundle.path(forExecutablePath: ancestorPath) == bundle
+                else { break }
+                root = ancestor.pid
+            }
+            result[pid] = root
+        }
+        return result
+    }
 }
