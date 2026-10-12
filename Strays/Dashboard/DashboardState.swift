@@ -15,6 +15,18 @@ enum SidebarItem: Hashable {
     case brew
     /// Apps and system daemons that listen on a port.
     case others
+    case stacks
+    /// What the hide rules are hiding, and the rules themselves.
+    case hidden
+    case settings
+
+    /// These show their own view rather than a list of strays.
+    var isPane: Bool {
+        switch self {
+        case .stacks, .hidden, .settings: true
+        default: false
+        }
+    }
 }
 
 /// Narrows whatever the sidebar shows.
@@ -132,6 +144,9 @@ final class DashboardState {
         case .docker: "Docker"
         case .brew: "Brew Services"
         case let .agent(id): model.catalog.agent(withID: id)?.displayName ?? "Agent"
+        case .stacks: "Stacks"
+        case .hidden: "Hidden"
+        case .settings: "Settings"
         case let .project(id): model.projectGroups.first { $0.id == id }?.title ?? "Project"
         }
     }
@@ -148,7 +163,7 @@ final class DashboardState {
             }
             sections = result
         case .ports:
-            let listening = model.snapshot.strays
+            let listening = model.strays
                 .filter { !$0.ports.isEmpty }
                 .sorted { ($0.primaryPort?.port ?? 0) < ($1.primaryPort?.port ?? 0) }
             sections = [StraySection(id: "ports", title: "By port number", symbol: "point.3.connected.trianglepath.dotted", project: nil, strays: listening)]
@@ -163,6 +178,8 @@ final class DashboardState {
             ]
         case let .project(id):
             sections = model.projectGroups.filter { $0.id == id }.map(Self.section(for:))
+        case .stacks, .hidden, .settings:
+            sections = []
         case let .agent(id):
             let strays = model.detectedAgents.first { $0.id == id }?.strays ?? []
             sections = [

@@ -65,6 +65,12 @@ struct StrayGroup: Identifiable {
     }
 }
 
+/// A place in the dashboard to jump to.
+enum DashboardRequest: Equatable {
+    case filter(StrayFilter)
+    case pane(SidebarItem)
+}
+
 /// An agent that has something to show: a running session, or strays it started.
 struct DetectedAgent: Identifiable {
     let profile: AgentProfile
@@ -91,9 +97,21 @@ final class AppModel {
 
     /// Agent, terminal, and IDE profiles, with the user's overrides applied.
     let catalog: AgentCatalog
-    /// Set by a notification's default action, to open the dashboard on
-    /// what it was about.
-    var pendingDashboardFilter: StrayFilter?
+
+    // Stacks and hide rules, mirrored to JSON in Application Support.
+    private(set) var stacks: [Stack] = []
+    private(set) var stackStatuses: [UUID: StackItemStatus] = [:]
+    /// Stack items with a start or stop in flight.
+    private(set) var busyStackItems: Set<UUID> = []
+    private(set) var hideRules: [HideRule] = []
+    var showsHidden = UserDefaults.standard.bool(forKey: Preferences.Key.showsHidden) {
+        didSet { UserDefaults.standard.set(showsHidden, forKey: Preferences.Key.showsHidden) }
+    }
+
+    @ObservationIgnored private let store: StackStore?
+    /// Where the dashboard should go next, set from outside it: a clicked
+    /// notification, or "Settings…" in the menu bar popover.
+    var dashboardRequest: DashboardRequest?
 
     @ObservationIgnored private var notifier: StaleNotifier?
     @ObservationIgnored private let monitor: Monitor?
@@ -108,7 +126,11 @@ final class AppModel {
     init() {
         let catalog = AgentCatalog.load()
         self.catalog = catalog
-        let monitor = Monitor(agents: catalog)
+        let store = StackStore()
+        self.store = store
+        stacks = store.loadStacks()
+        hideRules = store.loadHideRules()
+        let monitor = Monitor(agents: catalog, stackStore: store)
         self.monitor = monitor
         Task { await monitor.setStaleThreshold(hours: Preferences.staleAfterHours) }
         observeSleep()
@@ -121,7 +143,10 @@ final class AppModel {
     /// on the machine is scanned or signalled.
     init(demo snapshot: StraysSnapshot) {
         catalog = .bundled
+        store = nil
         monitor = nil
+        stacks = DemoData.stacks
+        stackStatuses = DemoData.stackStatuses
         self.snapshot = snapshot
         hasLoaded = true
         history = DemoData.history(for: snapshot)
@@ -131,20 +156,32 @@ final class AppModel {
 
     // MARK: - Derived views of the snapshot
 
+    /// Everything, minus what the user chose to hide. Every list in the UI
+    /// is built from this, so hiding something hides it everywhere.
+    var strays: [Stray] {
+        guard !showsHidden, !hideRules.isEmpty else { return snapshot.strays }
+        return snapshot.strays.filter { !hideRules.hides($0) }
+    }
+
+    /// What the hide rules are currently hiding.
+    var hiddenStrays: [Stray] {
+        hideRules.isEmpty ? [] : snapshot.strays.filter { hideRules.hides($0) }
+    }
+
     /// What a developer left running: dev processes, containers, services.
     /// These are counted in the menu bar and listed in the popover.
     var activeStrays: [Stray] {
-        snapshot.strays.filter { $0.isRunning && ($0.category == .dev || $0.category == .docker || $0.category == .brew) }
+        strays.filter { $0.isRunning && ($0.category == .dev || $0.category == .docker || $0.category == .brew) }
     }
 
     /// Apps and system daemons that listen on a port.
-    var otherListeners: [Stray] { snapshot.strays.filter { $0.category == .app || $0.category == .system } }
+    var otherListeners: [Stray] { strays.filter { $0.category == .app || $0.category == .system } }
 
     /// Every container, running or not.
-    var containers: [Stray] { snapshot.strays.filter { $0.category == .docker } }
+    var containers: [Stray] { strays.filter { $0.category == .docker } }
 
     /// Every Homebrew service, running or not.
-    var brewServices: [Stray] { snapshot.strays.filter { $0.category == .brew } }
+    var brewServices: [Stray] { strays.filter { $0.category == .brew } }
 
     /// The number shown next to the menu bar icon.
     var badgeCount: Int { activeStrays.count }
@@ -152,18 +189,18 @@ final class AppModel {
     var lanVisibleCount: Int { activeStrays.filter(\.isLANVisible).count }
 
     /// Left behind by an agent session that has since exited.
-    var orphanedStrays: [Stray] { snapshot.strays.filter(\.origin.isOrphaned) }
+    var orphanedStrays: [Stray] { strays.filter(\.origin.isOrphaned) }
 
     /// Running for hours and idle for the last half hour.
-    var staleStrays: [Stray] { snapshot.strays.filter(\.isStale) }
+    var staleStrays: [Stray] { strays.filter(\.isStale) }
 
     /// Drives the dot on the menu bar icon.
-    var needsAttention: Bool { snapshot.strays.contains { $0.origin.isOrphaned || $0.isStale } }
+    var needsAttention: Bool { strays.contains { $0.origin.isOrphaned || $0.isStale } }
 
     /// One entry per agent that is running or has left something behind,
     /// in the catalog's order.
     var detectedAgents: [DetectedAgent] {
-        let byAgent = Dictionary(grouping: snapshot.strays.filter { $0.origin.agentID != nil }) { $0.origin.agentID ?? "" }
+        let byAgent = Dictionary(grouping: strays.filter { $0.origin.agentID != nil }) { $0.origin.agentID ?? "" }
         let sessions = Dictionary(grouping: snapshot.agentSessions, by: \.agentID)
         return catalog.agents.compactMap { profile in
             let strays = byAgent[profile.id] ?? []
@@ -230,7 +267,9 @@ final class AppModel {
         let alive = Set(snapshot.strays.map(\.id))
         activity = activity.filter { alive.contains($0.key) }
         survivors = survivors.filter { alive.contains($0.key) }
-        notifier?.update(stale: snapshot.strays.filter(\.isStale))
+        // Hidden things do not nag.
+        notifier?.update(stale: snapshot.strays.filter { $0.isStale && !hideRules.hides($0) })
+        refreshStackStatuses()
     }
 
     // MARK: - Notifications
@@ -244,7 +283,7 @@ final class AppModel {
             }
         }
         notifier.review = { [weak self] in
-            self?.pendingDashboardFilter = .stale
+            self?.dashboardRequest = .filter(.stale)
             NSApp.activate(ignoringOtherApps: true)
         }
         self.notifier = notifier
@@ -541,9 +580,133 @@ final class AppModel {
         case let DockerError.api(_, message): message.isEmpty ? "Docker refused the request." : message
         case BrewError.notInstalled: "Homebrew is not installed."
         case let BrewError.failed(message): message
-        case SubprocessError.timedOut: "brew took too long to answer."
+        case SubprocessError.timedOut: "The command took too long to answer."
+        case let StackError.missingDirectory(path): path.isEmpty ? "It has no folder to run in." : "The folder \((path as NSString).abbreviatingWithTildeInPath) does not exist."
+        case let StackError.notFound(name): "\(name) does not exist on this Mac."
+        case StackError.stillRunning: "It is still running after 5 seconds. Stop it from the list to force it."
+        case StackError.dockerCommandNotFound: "Its containers do not exist yet, and the docker command was not found to create them."
+        case let StackError.commandFailed(message): message.isEmpty ? "The command failed." : message
         default: error.localizedDescription
         }
+    }
+
+    // MARK: - Stacks
+
+    private func refreshStackStatuses() {
+        guard let monitor, !stacks.isEmpty else { return }
+        let stacks = stacks
+        Task {
+            var statuses: [UUID: StackItemStatus] = [:]
+            for stack in stacks {
+                statuses.merge(await monitor.statuses(of: stack)) { _, new in new }
+            }
+            stackStatuses = statuses
+        }
+    }
+
+    func status(of item: StackItem) -> StackItemStatus {
+        stackStatuses[item.id] ?? .stopped
+    }
+
+    @discardableResult
+    func addStack(named name: String, items: [StackItem] = []) -> Stack {
+        let stack = Stack(name: name, items: items)
+        stacks.append(stack)
+        saveStacks()
+        return stack
+    }
+
+    func rename(_ stack: Stack, to name: String) {
+        update(stack) { $0.name = name }
+    }
+
+    func delete(_ stack: Stack) {
+        stacks.removeAll { $0.id == stack.id }
+        saveStacks()
+    }
+
+    func add(_ item: StackItem, to stack: Stack) {
+        update(stack) { stack in
+            // The same thing twice would only be started and stopped twice.
+            guard !stack.items.contains(where: { $0.kind == item.kind && $0.value == item.value && $0.directory == item.directory }) else { return }
+            stack.items.append(item)
+        }
+    }
+
+    func remove(_ item: StackItem, from stack: Stack) {
+        update(stack) { $0.items.removeAll { $0.id == item.id } }
+    }
+
+    private func update(_ stack: Stack, _ change: (inout Stack) -> Void) {
+        guard let index = stacks.firstIndex(where: { $0.id == stack.id }) else { return }
+        change(&stacks[index])
+        saveStacks()
+    }
+
+    private func saveStacks() {
+        guard let store else { return }
+        do {
+            try store.save(stacks)
+        } catch {
+            showToast("exclamationmark.triangle.fill", "Could not save stacks: \(error.localizedDescription)")
+        }
+        refreshStackStatuses()
+    }
+
+    /// Starts everything in the stack that is not already up.
+    func start(_ stack: Stack) {
+        // A partly running compose project still has containers to start.
+        for item in stack.items where status(of: item) != .running {
+            start(item)
+        }
+    }
+
+    /// Stops everything in the stack that is up.
+    func stop(_ stack: Stack) {
+        for item in stack.items where status(of: item).isRunning {
+            stop(item)
+        }
+    }
+
+    func start(_ item: StackItem) {
+        perform(on: item, verb: "start") { monitor in try await monitor.start(item) }
+    }
+
+    func stop(_ item: StackItem) {
+        perform(on: item, verb: "stop") { monitor in try await monitor.stop(item) }
+    }
+
+    private func perform(on item: StackItem, verb: String, _ action: @escaping @Sendable (Monitor) async throws -> Void) {
+        guard let monitor else { return showToast("hand.raised", "Demo mode: nothing was changed") }
+        guard !busyStackItems.contains(item.id) else { return }
+        busyStackItems.insert(item.id)
+        Task {
+            do {
+                try await action(monitor)
+            } catch {
+                showToast("exclamationmark.triangle.fill", "Could not \(verb) \(item.title): \(Self.describe(error))")
+            }
+            busyStackItems.remove(item.id)
+            stackStatuses[item.id] = await monitor.status(of: item)
+        }
+    }
+
+    // MARK: - Hiding
+
+    func hide(_ rule: HideRule) {
+        guard !hideRules.contains(where: { $0.kind == rule.kind && $0.value == rule.value }) else { return }
+        hideRules.append(rule)
+        saveHideRules()
+        showToast("eye.slash.fill", "Hidden: \(rule.summary)")
+    }
+
+    func unhide(_ rule: HideRule) {
+        hideRules.removeAll { $0.id == rule.id }
+        saveHideRules()
+    }
+
+    private func saveHideRules() {
+        try? store?.save(hideRules)
     }
 
     // MARK: - Toasts

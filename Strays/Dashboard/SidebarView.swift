@@ -9,7 +9,7 @@ struct SidebarView: View {
         List(selection: selection) {
             Section {
                 row(.all, "All", symbol: "square.grid.2x2", count: model.activeStrays.count + model.otherListeners.count, tint: Theme.dev)
-                row(.ports, "Listening Ports", symbol: "point.3.connected.trianglepath.dotted", count: model.snapshot.strays.filter { !$0.ports.isEmpty }.count, tint: Theme.docker)
+                row(.ports, "Listening Ports", symbol: "point.3.connected.trianglepath.dotted", count: model.strays.filter { !$0.ports.isEmpty }.count, tint: Theme.docker)
             }
 
             Section("Projects") {
@@ -43,6 +43,12 @@ struct SidebarView: View {
 
             Section("Everything else") {
                 row(.others, "Apps & System", symbol: "macwindow.on.rectangle", count: model.otherListeners.count, tint: .secondary)
+            }
+
+            Section {
+                row(.stacks, "Stacks", symbol: "square.stack.3d.up", count: model.stacks.count, tint: Theme.dev)
+                row(.hidden, "Hidden", symbol: "eye.slash", count: model.hiddenStrays.count, tint: .secondary)
+                row(.settings, "Settings", symbol: "gearshape", count: 0, tint: .secondary)
             }
         }
         .listStyle(.sidebar)

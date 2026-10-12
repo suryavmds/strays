@@ -126,7 +126,7 @@ struct CommandPalette: View {
     private var commands: [PaletteCommand] {
         var commands: [PaletteCommand] = []
 
-        for stray in model.snapshot.strays {
+        for stray in model.strays {
             let context = stray.project?.name ?? stray.subtitle
             let accent = Theme.accent(for: stray)
             if let port = stray.primaryPort, port.transport == .tcp {

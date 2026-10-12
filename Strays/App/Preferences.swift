@@ -8,6 +8,8 @@ enum Preferences {
         static let staleNotificationMode = "staleNotificationMode"
         static let staleAfterHours = "staleAfterHours"
         static let notificationPlanner = "staleNotificationPlanner"
+        static let showsHidden = "showsHidden"
+        static let preferredTerminal = "preferredTerminal"
     }
 
     static let defaultStaleAfterHours = 6.0
@@ -26,5 +28,34 @@ enum Preferences {
     static var notificationMode: StaleNotificationPlanner.Mode {
         UserDefaults.standard.string(forKey: Key.staleNotificationMode)
             .flatMap(StaleNotificationPlanner.Mode.init(rawValue:)) ?? .dailySummary
+    }
+}
+
+extension StackItem {
+    /// How the item is named in the UI.
+    var title: String {
+        switch kind {
+        case .command: value
+        case .composeProject: "\(value) (compose)"
+        case .brewService, .container: value
+        }
+    }
+
+    var symbol: String {
+        switch kind {
+        case .command: "terminal"
+        case .composeProject: "square.stack.3d.up"
+        case .brewService: "mug"
+        case .container: "shippingbox"
+        }
+    }
+
+    var kindLabel: String {
+        switch kind {
+        case .command: "Command"
+        case .composeProject: "Compose project"
+        case .brewService: "Brew service"
+        case .container: "Container"
+        }
     }
 }

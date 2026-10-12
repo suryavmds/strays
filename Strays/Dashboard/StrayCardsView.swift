@@ -306,6 +306,26 @@ struct StrayContextMenu: View {
         }
 
         Divider()
+        if let item = StackItem(recreating: stray) {
+            Menu("Add to Stack") {
+                ForEach(model.stacks) { stack in
+                    Button(stack.name) { model.add(item, to: stack) }
+                }
+                if !model.stacks.isEmpty { Divider() }
+                Button("New Stack with This") { model.addStack(named: stray.project?.name ?? stray.title, items: [item]) }
+            }
+        }
+        Menu("Hide") {
+            ForEach(stray.ports) { port in
+                Button("Anything on Port \(String(port.port))") { model.hide(.port(port.port)) }
+            }
+            Button("Everything Named “\(stray.hideName)”") { model.hide(.name(stray.hideName)) }
+            if let project = stray.project {
+                Button("Everything in \(project.name)") { model.hide(.project(project)) }
+            }
+        }
+
+        Divider()
         if stray.canBeStarted {
             Button("Start") { model.start(stray) }
         }

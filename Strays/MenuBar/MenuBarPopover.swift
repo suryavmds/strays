@@ -118,7 +118,7 @@ struct MenuBarPopover: View {
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 6)
-        .animation(Theme.listSpring, value: model.snapshot.strays.map(\.id))
+        .animation(Theme.listSpring, value: model.strays.map(\.id))
         .animation(Theme.listSpring, value: showsOthers)
     }
 
@@ -190,8 +190,7 @@ struct MenuBarPopover: View {
     private var footer: some View {
         HStack(spacing: 8) {
             Button {
-                openWindow(id: WindowID.dashboard)
-                NSApp.activate(ignoringOtherApps: true)
+                openDashboard(at: nil)
             } label: {
                 Label("Open Dashboard", systemImage: "macwindow")
                     .font(.system(size: 12, weight: .medium))
@@ -205,6 +204,9 @@ struct MenuBarPopover: View {
             Menu {
                 Button("Refresh Now") { model.refresh() }
                     .keyboardShortcut("r", modifiers: .command)
+                Button("Stacks…") { openDashboard(at: .stacks) }
+                Button("Settings…") { openDashboard(at: .settings) }
+                    .keyboardShortcut(",", modifiers: .command)
                 Divider()
                 Button("Quit Strays") { NSApp.terminate(nil) }
                     .keyboardShortcut("q", modifiers: .command)
@@ -219,6 +221,12 @@ struct MenuBarPopover: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+    }
+
+    private func openDashboard(at pane: SidebarItem?) {
+        if let pane { model.dashboardRequest = .pane(pane) }
+        openWindow(id: WindowID.dashboard)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     @ViewBuilder private var toast: some View {

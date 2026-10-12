@@ -23,7 +23,10 @@ struct DashboardView: View {
                 .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 300)
         } detail: {
             mainArea
-                .inspector(isPresented: $state.isInspectorOpen) {
+                .inspector(isPresented: Binding(
+                    get: { state.isInspectorOpen && !state.sidebar.isPane },
+                    set: { state.isInspectorOpen = $0 }
+                )) {
                     InspectorView(state: state)
                         .inspectorColumnWidth(min: 300, ideal: 350, max: 520)
                 }
@@ -49,19 +52,34 @@ struct DashboardView: View {
         .animation(Theme.listSpring, value: model.toast)
         .background(WindowVisibilityReader { model.isDashboardVisible = $0 })
         .background(DashboardWindowTracker())
-        .onChange(of: model.pendingDashboardFilter, initial: true) {
-            // A stale notification was clicked: show what it was about.
-            guard let filter = model.pendingDashboardFilter else { return }
-            state.sidebar = .all
-            state.filters = [filter]
-            model.pendingDashboardFilter = nil
+        .onChange(of: model.dashboardRequest, initial: true) {
+            // Asked from outside: a clicked notification, or the popover.
+            switch model.dashboardRequest {
+            case let .filter(filter):
+                state.sidebar = .all
+                state.filters = [filter]
+            case let .pane(item):
+                state.sidebar = item
+            case nil:
+                return
+            }
+            model.dashboardRequest = nil
         }
         .frame(minWidth: 900, minHeight: 540)
     }
 
     private var subtitle: String {
-        let count = state.visibleStrays(in: model).count
-        return count == 1 ? "1 item" : "\(count) items"
+        switch state.sidebar {
+        case .stacks:
+            return model.stacks.count == 1 ? "1 stack" : "\(model.stacks.count) stacks"
+        case .hidden:
+            return model.hideRules.count == 1 ? "1 rule" : "\(model.hideRules.count) rules"
+        case .settings:
+            return "Strays \(StraysCore.version)"
+        default:
+            let count = state.visibleStrays(in: model).count
+            return count == 1 ? "1 item" : "\(count) items"
+        }
     }
 
     // MARK: - Main area
@@ -71,7 +89,13 @@ struct DashboardView: View {
         ZStack {
             VisualEffectBackground()
                 .ignoresSafeArea()
-            if !model.hasLoaded {
+            if state.sidebar == .stacks {
+                StacksView()
+            } else if state.sidebar == .hidden {
+                HiddenView()
+            } else if state.sidebar == .settings {
+                SettingsView()
+            } else if !model.hasLoaded {
                 ProgressView("Looking around…")
             } else if sections.isEmpty {
                 emptyState
@@ -127,6 +151,33 @@ struct DashboardView: View {
     // MARK: - Toolbar
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
+        // View mode and filters only mean something for a list of strays.
+        if !state.sidebar.isPane {
+            listToolbar
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                state.isPaletteOpen.toggle()
+            } label: {
+                Label("Command Palette", systemImage: "command")
+            }
+            .keyboardShortcut("k", modifiers: .command)
+            .help("Command palette (⌘K)")
+        }
+        if !state.sidebar.isPane {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    state.isInspectorOpen.toggle()
+                } label: {
+                    Label("Inspector", systemImage: "sidebar.trailing")
+                }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .help("Show or hide the inspector (⌥⌘I)")
+            }
+        }
+    }
+
+    @ToolbarContentBuilder private var listToolbar: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
             Picker("View", selection: $state.viewMode) {
                 ForEach(DashboardViewMode.allCases) { mode in
@@ -157,24 +208,6 @@ struct DashboardView: View {
                 Label("Filter", systemImage: state.filters.isEmpty ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
             }
             .help(state.filters.isEmpty ? "Filter by LAN-visible, stale, orphaned, or unknown origin" : "Filtering: " + state.filters.map(\.title).sorted().joined(separator: ", "))
-        }
-        ToolbarItem(placement: .primaryAction) {
-            Button {
-                state.isPaletteOpen.toggle()
-            } label: {
-                Label("Command Palette", systemImage: "command")
-            }
-            .keyboardShortcut("k", modifiers: .command)
-            .help("Command palette (⌘K)")
-        }
-        ToolbarItem(placement: .primaryAction) {
-            Button {
-                state.isInspectorOpen.toggle()
-            } label: {
-                Label("Inspector", systemImage: "sidebar.trailing")
-            }
-            .keyboardShortcut("i", modifiers: [.command, .option])
-            .help("Show or hide the inspector (⌥⌘I)")
         }
     }
 }

@@ -71,6 +71,14 @@ enum SnapshotRenderer {
             state.selection = model.orphanedStrays.first?.id
         }
         renderWindow(agent.environment(model), size: CGSize(width: 1180, height: 760), scheme: .dark, to: directory.appendingPathComponent("dashboard-agent-dark.png"))
+        for (name, item) in [("stacks", SidebarItem.stacks), ("settings", .settings)] {
+            let pane = DashboardView { state in
+                state.persistsViewMode = false
+                state.sidebar = item
+                state.isInspectorOpen = false
+            }
+            renderWindow(pane.environment(model), size: CGSize(width: 1180, height: 760), scheme: .dark, to: directory.appendingPathComponent("dashboard-\(name)-dark.png"))
+        }
         let palette = DashboardView { state in
             state.persistsViewMode = false
             state.viewMode = .cards

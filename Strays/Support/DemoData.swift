@@ -59,6 +59,22 @@ enum DemoData {
         }
     }
 
+    // Fixed ids, so the demo statuses line up with the demo items.
+    private static let stackItems: [StackItem] = [
+        StackItem(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!, kind: .command, value: "npm run dev", directory: "\(home)/code/shop"),
+        StackItem(id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!, kind: .command, value: "celery -A tasks worker", directory: "\(home)/code/shop-api"),
+        StackItem(id: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!, kind: .composeProject, value: "shop", directory: "\(home)/code/shop"),
+        StackItem(id: UUID(uuidString: "00000000-0000-0000-0000-000000000004")!, kind: .brewService, value: "redis"),
+    ]
+
+    static var stacks: [Stack] {
+        [Stack(id: UUID(uuidString: "00000000-0000-0000-0000-0000000000AA")!, name: "Shop local", items: stackItems)]
+    }
+
+    static var stackStatuses: [UUID: StackItemStatus] {
+        [stackItems[0].id: .running, stackItems[1].id: .running, stackItems[2].id: .running, stackItems[3].id: .stopped]
+    }
+
     static var agentSessions: [AgentSession] {
         [session("claude-code", pid: 47_990, project: shop), session("codex", pid: 51_800, project: api)]
     }
