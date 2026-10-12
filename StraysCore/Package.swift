@@ -8,7 +8,10 @@ let package = Package(
         .library(name: "StraysCore", targets: ["StraysCore"]),
     ],
     targets: [
-        .target(name: "StraysCore"),
+        .target(
+            name: "StraysCore",
+            resources: [.process("Resources")]
+        ),
         .testTarget(
             name: "StraysCoreTests",
             dependencies: ["StraysCore"]

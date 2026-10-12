@@ -1,0 +1,142 @@
+{
+  "version": 1,
+  "notes": [
+    "Rules that decide which processes without a listening port count as dev processes.",
+    "A process qualifies when (1) its executable matches a runtime below or one of devBinaryPathPatterns, or lives inside a project folder, AND (2) its working directory is inside the home folder and matches none of ignore.cwdPatterns.",
+    "All patterns are regular expressions. A leading ^~ is expanded to the user's home folder."
+  ],
+  "minimumAgeSeconds": 8,
+  "runtimes": [
+    {
+      "id": "node",
+      "displayName": "Node.js",
+      "symbol": "hexagon",
+      "isInterpreter": true,
+      "executableNames": ["node", "nodejs", "ts-node", "tsx"]
+    },
+    {
+      "id": "bun",
+      "displayName": "Bun",
+      "symbol": "circle.hexagongrid",
+      "isInterpreter": true,
+      "executableNames": ["bun", "bunx"]
+    },
+    {
+      "id": "deno",
+      "displayName": "Deno",
+      "symbol": "drop",
+      "isInterpreter": true,
+      "executableNames": ["deno"]
+    },
+    {
+      "id": "python",
+      "displayName": "Python",
+      "symbol": "chevron.left.forwardslash.chevron.right",
+      "isInterpreter": true,
+      "executableNames": ["uv", "uvicorn", "gunicorn", "celery", "flask", "jupyter"],
+      "executableNamePatterns": ["^[Pp]ython[0-9.]*$", "^pypy[0-9.]*$"]
+    },
+    {
+      "id": "ruby",
+      "displayName": "Ruby",
+      "symbol": "diamond",
+      "isInterpreter": true,
+      "executableNames": ["bundle", "puma", "rails", "sidekiq", "rake"],
+      "executableNamePatterns": ["^ruby[0-9.]*$"]
+    },
+    {
+      "id": "php",
+      "displayName": "PHP",
+      "symbol": "curlybraces",
+      "isInterpreter": true,
+      "executableNames": ["php-fpm", "composer"],
+      "executableNamePatterns": ["^php[0-9.]*$"]
+    },
+    {
+      "id": "java",
+      "displayName": "JVM",
+      "symbol": "cup.and.saucer",
+      "isInterpreter": false,
+      "executableNames": ["java", "kotlin", "scala", "gradle", "mvn"]
+    },
+    {
+      "id": "go",
+      "displayName": "Go",
+      "symbol": "hare",
+      "isInterpreter": false,
+      "executableNames": ["go", "air", "dlv", "gow"]
+    },
+    {
+      "id": "rust",
+      "displayName": "Rust",
+      "symbol": "gearshape.2",
+      "isInterpreter": false,
+      "executableNames": ["cargo", "cargo-watch", "bacon", "trunk"]
+    },
+    {
+      "id": "dotnet",
+      "displayName": ".NET",
+      "symbol": "number",
+      "isInterpreter": false,
+      "executableNames": ["dotnet"]
+    },
+    {
+      "id": "elixir",
+      "displayName": "Elixir",
+      "symbol": "drop.triangle",
+      "isInterpreter": false,
+      "executableNames": ["beam.smp", "elixir", "erl", "mix", "iex"]
+    },
+    {
+      "id": "swift",
+      "displayName": "Swift",
+      "symbol": "swift",
+      "isInterpreter": false,
+      "executableNames": ["swift-run", "swift-build"]
+    }
+  ],
+  "devBinaryPathPatterns": [
+    "/target/(debug|release)/",
+    "/go-build[0-9]+/",
+    "/\\.build/([^/]+/)?(debug|release)/",
+    "/node_modules/",
+    "/zig-out/bin/"
+  ],
+  "devBinaryExcludedPathPatterns": [
+    "^~/Library/",
+    "^~/\\.[^/]+/",
+    "^~/Applications/",
+    "^/Applications/",
+    "^/System/",
+    "^/usr/(bin|sbin|libexec)/"
+  ],
+  "ignore": {
+    "executableNames": [],
+    "cwdPatterns": [
+      "^~/Library(/|$)",
+      "^~/\\.[^/]+(/|$)",
+      "\\.app(/|$)"
+    ],
+    "commandLinePatterns": [
+      "tsserver(\\.js)?(\\s|$)",
+      "typescript-language-server",
+      "typingsInstaller",
+      "eslintServer",
+      "vscode-[a-z]+-language(server|-server)",
+      "(json|css|html|yaml|tailwindcss|bash|dockerfile)-language-?server",
+      "pyright-langserver",
+      "pylance",
+      "jedi-language-server",
+      "pylsp",
+      "ruff(\\s+server|-lsp)",
+      "ruby-lsp",
+      "solargraph",
+      "gopls",
+      "rust-analyzer",
+      "sourcekit-lsp",
+      "copilot-language-server",
+      "prettierd?(\\s|$).*--stdio",
+      "/extensions/[^/]+/(dist|out|server|bin)/"
+    ]
+  }
+}
