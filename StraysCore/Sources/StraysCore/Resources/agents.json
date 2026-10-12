@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "notes": [
+    "Profiles that let Strays say which AI coding agent, terminal, or IDE started a process.",
+    "A process is attributed to an agent when (1) an ancestor in its parent chain matches ancestorMatchers, or (2) its environment contains one of envMarkers. An ancestor match wins over an environment match, and the nearest ancestor is checked first.",
+    "When only the environment matches, the process has been detached from the agent. If the agent session that started it is gone, Strays labels it 'Orphaned from <agent>'.",
+    "RULE FOR envMarkers: only list a variable you have seen yourself in the environment of a background process started through the agent, and say so in 'verified'. Variables that are merely believed to exist go in unverifiedEnvMarkers, which Strays never matches on.",
+    "To verify: start a long-running command through the agent, then run `strays inspect <pid>`. See CONTRIBUTING.md.",
+    "matchers: executableNames are exact basenames (case-sensitive); bundleNames are the outermost .app name; pathFragments are substrings of the executable path; argumentPatterns are regular expressions matched against the full command line.",
+    "To add or change profiles without rebuilding, put a file of the same shape at ~/Library/Application Support/Strays/agents.json. Entries with a matching id replace the built-in ones."
+  ],
+  "agents": [
+    {
+      "id": "claude-code",
+      "displayName": "Claude Code",
+      "badgeColor": "#D97757",
+      "icon": "sparkle",
+      "ancestorMatchers": {
+        "executableNames": ["claude", "claude.exe"],
+        "pathFragments": ["/@anthropic-ai/claude-code/", "/Claude/claude-code/", "/.claude/local/"],
+        "argumentPatterns": ["@anthropic-ai/claude-code"]
+      },
+      "envMarkers": [
+        {
+          "name": "CLAUDECODE",
+          "value": "1",
+          "verified": "2026-10-12: Claude Code 2.1.283 (CLI, `claude -p`) and 2.1.295 (desktop app), macOS 26. Read from a background `node` process with sysctl KERN_PROCARGS2, while the session ran and again after it exited and the process had been reparented to launchd."
+        },
+        {
+          "name": "AI_AGENT",
+          "valuePrefix": "claude-code",
+          "verified": "2026-10-12: same two versions. The value was `claude-code_2-1-283_agent` under the CLI and `claude-code_2-1-295_agent` under the desktop app, so each sets its own."
+        }
+      ],
+      "sessionPIDVariable": "CLAUDE_PID",
+      "notes": "CLAUDE_PID holds the PID of the agent process that spawned the shell (verified 2026-10-12 on both versions: the CLI set it to its own PID, not the PID inherited from the session it was launched in). Strays uses it to tell a detached process whose session is still alive from a true orphan. The agent is a native binary these days (`claude`, or `claude.exe` inside the npm package); older releases ran `node …/@anthropic-ai/claude-code/cli.js`, which argumentPatterns still covers."
+    },
+    {
+      "id": "codex",
+      "displayName": "Codex",
+      "badgeColor": "#10A37F",
+      "icon": "chevron.left.forwardslash.chevron.right",
+      "ancestorMatchers": {
+        "executableNames": ["codex"],
+        "pathFragments": ["/@openai/codex/"],
+        "argumentPatterns": ["@openai/codex", "(^|/)codex(\\.js)?(\\s|$)"]
+      },
+      "envMarkers": [],
+      "unverifiedEnvMarkers": ["CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_THREAD_ID"],
+      "notes": "Not installed on the machine these profiles were verified on, so no environment marker is shipped. Without one, a process that outlives its Codex session cannot be recognised as an orphan."
+    },
+    {
+      "id": "gemini-cli",
+      "displayName": "Gemini CLI",
+      "badgeColor": "#4285F4",
+      "icon": "diamond",
+      "ancestorMatchers": {
+        "executableNames": ["gemini"],
+        "pathFragments": ["/@google/gemini-cli/"],
+        "argumentPatterns": ["@google/gemini-cli", "(^|/)gemini(\\.js)?(\\s|$)"]
+      },
+      "envMarkers": [],
+      "unverifiedEnvMarkers": ["GEMINI_CLI"],
+      "notes": "Not installed on the verifying machine; no environment marker is shipped."
+    },
+    {
+      "id": "aider",
+      "displayName": "Aider",
+      "badgeColor": "#14B014",
+      "icon": "terminal",
+      "ancestorMatchers": {
+        "executableNames": ["aider"],
+        "argumentPatterns": ["(^|/)aider(\\s|$)", "-m\\s+aider(\\s|$)"]
+      },
+      "envMarkers": [],
+      "unverifiedEnvMarkers": [],
+      "notes": "Aider is a Python program, so it is recognised by its command line (`python … aider`). Not installed on the verifying machine; no environment marker is shipped."
+    },
+    {
+      "id": "cursor-agent",
+      "displayName": "Cursor Agent",
+      "badgeColor": "#8E8E93",
+      "icon": "cursorarrow.rays",
+      "ancestorMatchers": {
+        "executableNames": ["cursor-agent"],
+        "pathFragments": ["/cursor-agent/"],
+        "argumentPatterns": ["(^|/)cursor-agent(\\s|$)"]
+      },
+      "envMarkers": [],
+      "unverifiedEnvMarkers": ["CURSOR_AGENT", "CURSOR_TRACE_ID"],
+      "notes": "Covers the `cursor-agent` command-line tool. The agent inside the Cursor editor runs its commands through the same 'Cursor Helper' processes as a terminal you opened yourself, and no verified marker tells the two apart, so those are reported as started from the Cursor IDE rather than guessed at. Not installed on the verifying machine."
+    }
+  ],
+  "terminals": [
+    { "id": "terminal", "displayName": "Terminal", "matchers": { "bundleNames": ["Terminal"] } },
+    { "id": "iterm2", "displayName": "iTerm2", "matchers": { "bundleNames": ["iTerm", "iTerm2"] } },
+    { "id": "ghostty", "displayName": "Ghostty", "matchers": { "bundleNames": ["Ghostty"], "executableNames": ["ghostty"] } },
+    { "id": "warp", "displayName": "Warp", "matchers": { "bundleNames": ["Warp", "WarpPreview"] } },
+    { "id": "kitty", "displayName": "kitty", "matchers": { "bundleNames": ["kitty"], "executableNames": ["kitty"] } },
+    { "id": "wezterm", "displayName": "WezTerm", "matchers": { "bundleNames": ["WezTerm"], "executableNames": ["wezterm-gui", "wezterm-mux-server"] } },
+    { "id": "alacritty", "displayName": "Alacritty", "matchers": { "bundleNames": ["Alacritty"], "executableNames": ["alacritty"] } },
+    { "id": "hyper", "displayName": "Hyper", "matchers": { "bundleNames": ["Hyper"] } },
+    { "id": "tabby", "displayName": "Tabby", "matchers": { "bundleNames": ["Tabby"] } },
+    { "id": "tmux", "displayName": "tmux", "matchers": { "executableNames": ["tmux"] } },
+    { "id": "zellij", "displayName": "Zellij", "matchers": { "executableNames": ["zellij"] } },
+    { "id": "screen", "displayName": "screen", "matchers": { "executableNames": ["screen", "SCREEN"] } }
+  ],
+  "ides": [
+    { "id": "vscode", "displayName": "VS Code", "matchers": { "bundleNames": ["Visual Studio Code", "Visual Studio Code - Insiders", "VSCodium"] } },
+    { "id": "cursor", "displayName": "Cursor", "matchers": { "bundleNames": ["Cursor"] } },
+    { "id": "windsurf", "displayName": "Windsurf", "matchers": { "bundleNames": ["Windsurf"] } },
+    { "id": "zed", "displayName": "Zed", "matchers": { "bundleNames": ["Zed", "Zed Preview"] } },
+    { "id": "xcode", "displayName": "Xcode", "matchers": { "bundleNames": ["Xcode", "Xcode-beta"] } },
+    {
+      "id": "jetbrains",
+      "displayName": "JetBrains",
+      "matchers": {
+        "bundleNames": [
+          "IntelliJ IDEA", "IntelliJ IDEA CE", "IntelliJ IDEA Ultimate", "PyCharm", "PyCharm CE", "WebStorm", "GoLand",
+          "RubyMine", "PhpStorm", "CLion", "Rider", "RustRover", "DataGrip", "DataSpell", "Fleet", "Android Studio"
+        ]
+      }
+    },
+    { "id": "nova", "displayName": "Nova", "matchers": { "bundleNames": ["Nova"] } },
+    { "id": "sublime", "displayName": "Sublime Text", "matchers": { "bundleNames": ["Sublime Text"] } }
+  ]
+}

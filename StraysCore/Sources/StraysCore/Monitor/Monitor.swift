@@ -11,19 +11,23 @@ public struct StraysSnapshot: Sendable, Equatable {
     public var isDockerAvailable: Bool
     /// False when Homebrew is not installed.
     public var isBrewAvailable: Bool
+    /// AI agent sessions that are running right now.
+    public var agentSessions: [AgentSession]
 
     public init(
         strays: [Stray] = [],
         capturedAt: Date = Date(),
         scanDuration: TimeInterval = 0,
         isDockerAvailable: Bool = false,
-        isBrewAvailable: Bool = false
+        isBrewAvailable: Bool = false,
+        agentSessions: [AgentSession] = []
     ) {
         self.strays = strays
         self.capturedAt = capturedAt
         self.scanDuration = scanDuration
         self.isDockerAvailable = isDockerAvailable
         self.isBrewAvailable = isBrewAvailable
+        self.agentSessions = agentSessions
     }
 
     public static let empty = StraysSnapshot(strays: [], capturedAt: .distantPast)
@@ -82,7 +86,14 @@ public actor Monitor {
     private let merger: StrayMerger
     private let docker: DockerCollector?
     private let brew: BrewCollector?
+    private let attribution: AttributionEngine
     private let currentUID = getuid()
+
+    private var staleTracker = StaleTracker()
+    /// Agent sessions seen on the previous scan, to notice the ones that exit.
+    private var knownSessions: [Int32: AgentSession] = [:]
+    /// Sessions that have exited. An orphan's environment may still name one.
+    private var pastSessions: [Int32: AgentSession] = [:]
 
     private var cadence: Cadence = .paused
     private var loop: Task<Void, Never>?
@@ -98,9 +109,12 @@ public actor Monitor {
         minimumAge: TimeInterval? = nil,
         sources: Sources = .all,
         dockerCollector: DockerCollector? = nil,
-        brewCollector: BrewCollector? = nil
+        brewCollector: BrewCollector? = nil,
+        agents: AgentCatalog = .bundled
     ) {
         let resolver = ProjectResolver(homeDirectory: homeDirectory)
+        let engine = AttributionEngine(catalog: agents)
+        attribution = engine
         ports = PortCollector(includeOtherUsers: sources.contains(.otherUsers))
         classifier = DevProcessClassifier(
             rules: rules,
@@ -108,7 +122,7 @@ public actor Monitor {
             projectResolver: resolver,
             minimumAge: minimumAge
         )
-        builder = StrayBuilder(projectResolver: resolver, excludedPIDs: [getpid()])
+        builder = StrayBuilder(projectResolver: resolver, excludedPIDs: [getpid()], attribution: engine)
         merger = StrayMerger(projectResolver: resolver)
         docker = sources.contains(.docker) ? (dockerCollector ?? DockerCollector()) : nil
         brew = sources.contains(.brew) ? (brewCollector ?? BrewCollector()) : nil
@@ -161,15 +175,22 @@ public actor Monitor {
         let brewSnapshot = await currentBrewSnapshot()
         let dockerSnapshot = await currentDockerSnapshot()
         let scan = await scan(serviceRoots: Set(brewSnapshot.services.compactMap(\.pid)))
-        let strays = merger.merge(processes: builder.build(from: scan), docker: dockerSnapshot, brew: brewSnapshot)
+        var strays = merger.merge(processes: builder.build(from: scan), docker: dockerSnapshot, brew: brewSnapshot)
+
+        let now = Date()
+        let stale = staleTracker.update(with: strays, now: now)
+        for index in strays.indices where stale.contains(strays[index].id) {
+            strays[index].isStale = true
+        }
 
         let elapsed = Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000_000
         let snapshot = StraysSnapshot(
             strays: strays,
-            capturedAt: Date(),
+            capturedAt: now,
             scanDuration: elapsed,
             isDockerAvailable: dockerSnapshot.isAvailable,
-            isBrewAvailable: brewSnapshot.isAvailable
+            isBrewAvailable: brewSnapshot.isAvailable,
+            agentSessions: Self.topLevel(scan.sessions, in: scan.table)
         )
         latest = snapshot
         for continuation in subscribers.values {
@@ -222,21 +243,51 @@ public actor Monitor {
             classifier.runtime(forExecutablePath: paths[$0.pid], name: $0.name) != nil
         }
 
+        // Agents, recognised by their executable. They are never strays
+        // themselves; they are what strays get attributed to.
+        var agentIDs: [Int32: String] = [:]
+        for entry in ownEntries {
+            if let profile = attribution.agent(forExecutablePath: paths[entry.pid], name: entry.name) {
+                agentIDs[entry.pid] = profile.id
+            }
+        }
+
         // Phase 2: full details for those, for everything with a port, for
-        // the main process of any app a listener belongs to, and for the
-        // main process of each Homebrew service.
+        // the main process of any app a listener belongs to, for the main
+        // process of each Homebrew service, and for each agent.
         let listenerPIDs = Set(listening.map(\.pid))
         let appRoots = ProcessGrouper.appRoots(of: listenerPIDs, executablePaths: paths, in: table)
         let services = serviceRoots.filter { table[$0] != nil }
-        var wanted = Set(runtimeCandidates.map(\.pid)).union(listenerPIDs).union(appRoots.values).union(services)
+        var wanted = Set(runtimeCandidates.map(\.pid)).union(listenerPIDs).union(appRoots.values).union(services).union(agentIDs.keys)
         var details = await inspector.details(for: wanted.compactMap { table[$0] })
 
-        let now = Date()
-        var devProcesses: [Int32: DevClassification] = [:]
-        for candidate in runtimeCandidates where !services.contains(candidate.pid) {
-            if let detail = details[candidate.pid], let classification = classifier.classify(detail, now: now) {
-                devProcesses[candidate.pid] = classification
+        // Agents that are a script run by an interpreter (`python … aider`)
+        // only show in the command line.
+        for candidate in runtimeCandidates where agentIDs[candidate.pid] == nil {
+            if let detail = details[candidate.pid], let profile = attribution.agent(for: detail) {
+                agentIDs[candidate.pid] = profile.id
             }
+        }
+        let sessions = agentIDs.reduce(into: [Int32: AgentSession]()) { result, pair in
+            guard let entry = table[pair.key] else { return }
+            result[pair.key] = AgentSession(agentID: pair.value, identity: entry.identity, cwd: details[pair.key]?.cwd)
+        }
+        rememberSessions(sessions)
+
+        let now = Date()
+        let tcpListeners = Set(listening.lazy.filter { $0.transport == .tcp }.map(\.pid))
+        var devProcesses: [Int32: DevClassification] = [:]
+        for candidate in runtimeCandidates where !services.contains(candidate.pid) && sessions[candidate.pid] == nil {
+            guard let detail = details[candidate.pid] else { continue }
+            let startedByAgent = attribution.agent(inEnvironment: detail.environment) != nil
+                || table.ancestors(of: candidate.pid).contains { sessions[$0.pid] != nil }
+            let classification = classifier.classify(
+                detail,
+                now: now,
+                listens: tcpListeners.contains(candidate.pid),
+                startedByAgent: startedByAgent
+            )
+            if let classification { devProcesses[candidate.pid] = classification }
         }
 
         // A dev process or a service owns its subtree, so read the
@@ -255,8 +306,83 @@ public actor Monitor {
             details: details,
             devProcesses: devProcesses,
             appRoots: appRoots,
-            subtreeOwners: services
+            subtreeOwners: services,
+            executablePaths: paths,
+            sessions: sessions,
+            pastSessions: pastSessions
         )
+    }
+
+    /// Keeps the working directory of sessions that have just exited, so an
+    /// orphan can still be filed under the project its session worked in.
+    private func rememberSessions(_ current: [Int32: AgentSession]) {
+        for (pid, session) in knownSessions where current[pid]?.identity != session.identity {
+            pastSessions[pid] = session
+        }
+        knownSessions = current
+        if pastSessions.count > 256 {
+            let newest = pastSessions.values.sorted { $0.identity.startDate > $1.identity.startDate }.prefix(128)
+            pastSessions = Dictionary(uniqueKeysWithValues: newest.map { ($0.pid, $0) })
+        }
+    }
+
+    /// An agent may run helper copies of itself. Only the outermost process
+    /// of each is a session the user would recognise.
+    private static func topLevel(_ sessions: [Int32: AgentSession], in table: ProcessTable) -> [AgentSession] {
+        sessions.values
+            .filter { session in
+                !table.ancestors(of: session.pid).contains { sessions[$0.pid]?.agentID == session.agentID }
+            }
+            .sorted { $0.identity.startDate > $1.identity.startDate }
+    }
+
+    // MARK: - Inspecting one process
+
+    func inspect(_ entry: ProcessEntry, in table: ProcessTable) async -> ProcessInspection {
+        let ownEntries = table.entries.values.filter { $0.uid == currentUID }
+        let paths = await inspector.executablePaths(for: ownEntries)
+
+        var agentIDs: [Int32: String] = [:]
+        for candidate in ownEntries {
+            if let profile = attribution.agent(forExecutablePath: paths[candidate.pid], name: candidate.name) {
+                agentIDs[candidate.pid] = profile.id
+            }
+        }
+        let ancestors = table.ancestors(of: entry.pid)
+        let details = await inspector.details(for: [entry] + ancestors + agentIDs.keys.compactMap { table[$0] })
+        for ancestor in ancestors where agentIDs[ancestor.pid] == nil {
+            if let detail = details[ancestor.pid], let profile = attribution.agent(for: detail) {
+                agentIDs[ancestor.pid] = profile.id
+            }
+        }
+        let sessions = agentIDs.reduce(into: [Int32: AgentSession]()) { result, pair in
+            guard let agent = table[pair.key] else { return }
+            result[pair.key] = AgentSession(agentID: pair.value, identity: agent.identity, cwd: details[pair.key]?.cwd)
+        }
+
+        let process = details[entry.pid] ?? ProcessDetails(entry: entry, isInspectable: false)
+        let context = AttributionEngine.Context(table: table, executablePaths: paths, sessions: sessions, pastSessions: pastSessions)
+        let result = attribution.origin(of: process, in: context)
+
+        return ProcessInspection(
+            details: process,
+            ancestors: ancestors.map { ancestor in
+                let path = paths[ancestor.pid] ?? details[ancestor.pid]?.executablePath
+                let role = sessions[ancestor.pid].flatMap { attribution.catalog.agent(withID: $0.agentID) }.map { "agent: \($0.displayName)" }
+                    ?? attribution.role(forExecutablePath: path, name: ancestor.name)
+                return .init(entry: ancestor, executablePath: path, role: role)
+            },
+            origin: result.origin,
+            session: result.session,
+            candidateMarkers: AttributionEngine.candidateMarkers(in: process.environment)
+        )
+    }
+
+    // MARK: - Settings
+
+    /// How long something must have run, idle, before it is flagged stale.
+    public func setStaleThreshold(hours: Double) {
+        staleTracker.staleAfter = max(0.25, hours) * 3_600
     }
 
     // MARK: - Docker and Homebrew actions

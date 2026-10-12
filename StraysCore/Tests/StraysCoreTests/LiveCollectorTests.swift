@@ -191,7 +191,9 @@ final class MonitorLiveTests: XCTestCase {
     private var projectURL: URL { home.url.appendingPathComponent("code/fixture") }
 
     private func monitor() -> Monitor {
-        Monitor(homeDirectory: home.path, minimumAge: 0, sources: [])
+        // No agent profiles: these tests must behave the same whether or
+        // not the test run itself was started by an AI agent.
+        Monitor(homeDirectory: home.path, minimumAge: 0, sources: [], agents: AgentCatalog(agents: []))
     }
 
     func testServerInAProjectIsADevStrayWithItsPort() async throws {

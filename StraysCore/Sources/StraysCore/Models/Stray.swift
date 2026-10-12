@@ -18,6 +18,8 @@ public enum Origin: Hashable, Sendable {
         if case let .agent(_, orphaned) = self { return orphaned }
         return false
     }
+
+    public var isUnknown: Bool { self == .unknown }
 }
 
 /// A process tree shown as one item: `npm run dev`, the shell it spawned, and
@@ -75,6 +77,11 @@ public struct Stray: Identifiable, Sendable, Equatable {
     /// False for a stopped container or a stopped Homebrew service, which
     /// are listed so they can be started again.
     public var isRunning: Bool
+    /// Running for hours and idle for the last half hour: probably forgotten.
+    public var isStale: Bool
+    /// The agent session that started this, when we know which one it was.
+    /// For an orphan this is a session that has already exited.
+    public var agentSession: AgentSession?
 
     public init(
         id: String,
@@ -88,7 +95,9 @@ public struct Stray: Identifiable, Sendable, Equatable {
         startedAt: Date? = nil,
         cpuPercent: Double = 0,
         memoryBytes: UInt64 = 0,
-        isRunning: Bool = true
+        isRunning: Bool = true,
+        isStale: Bool = false,
+        agentSession: AgentSession? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -102,6 +111,8 @@ public struct Stray: Identifiable, Sendable, Equatable {
         self.cpuPercent = cpuPercent
         self.memoryBytes = memoryBytes
         self.isRunning = isRunning
+        self.isStale = isStale
+        self.agentSession = agentSession
     }
 
     public var processGroup: ProcessGroup? {

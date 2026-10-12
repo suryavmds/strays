@@ -16,6 +16,13 @@ public struct ProcessScan: Sendable {
     /// Processes that, like dev processes, stand for their whole subtree:
     /// the main process of a Homebrew service, for one.
     public var subtreeOwners: Set<Int32>
+    /// Executable paths of our own processes, for recognising terminals
+    /// and IDEs among a process's ancestors.
+    public var executablePaths: [Int32: String]
+    /// Live agent processes, by PID. They are also boundaries.
+    public var sessions: [Int32: AgentSession]
+    /// Agent sessions that have exited, by PID, for naming an orphan's project.
+    public var pastSessions: [Int32: AgentSession]
 
     public init(
         table: ProcessTable,
@@ -24,7 +31,10 @@ public struct ProcessScan: Sendable {
         devProcesses: [Int32: DevClassification],
         boundaries: Set<Int32> = [],
         appRoots: [Int32: Int32] = [:],
-        subtreeOwners: Set<Int32> = []
+        subtreeOwners: Set<Int32> = [],
+        executablePaths: [Int32: String] = [:],
+        sessions: [Int32: AgentSession] = [:],
+        pastSessions: [Int32: AgentSession] = [:]
     ) {
         self.table = table
         self.ports = ports
@@ -33,6 +43,9 @@ public struct ProcessScan: Sendable {
         self.boundaries = boundaries
         self.appRoots = appRoots
         self.subtreeOwners = subtreeOwners
+        self.executablePaths = executablePaths
+        self.sessions = sessions
+        self.pastSessions = pastSessions
     }
 }
 
@@ -43,15 +56,19 @@ public struct StrayBuilder: Sendable {
     private let projectResolver: ProjectResolver
     /// PIDs that never appear: Strays itself, for one.
     private let excludedPIDs: Set<Int32>
+    /// Without an engine every origin is unknown.
+    private let attribution: AttributionEngine?
 
     public init(
         projectResolver: ProjectResolver,
         currentUID: UInt32 = getuid(),
-        excludedPIDs: Set<Int32> = []
+        excludedPIDs: Set<Int32> = [],
+        attribution: AttributionEngine? = nil
     ) {
         self.projectResolver = projectResolver
         self.currentUID = currentUID
         self.excludedPIDs = excludedPIDs
+        self.attribution = attribution
     }
 
     public func build(from scan: ProcessScan) -> [Stray] {
@@ -68,8 +85,14 @@ public struct StrayBuilder: Sendable {
         var roots = ProcessGrouper.roots(
             of: interesting,
             absorbing: owners.subtracting(excludedPIDs),
-            boundaries: scan.boundaries.union(excludedPIDs),
+            boundaries: scan.boundaries.union(excludedPIDs).union(scan.sessions.keys),
             in: scan.table
+        )
+        let context = AttributionEngine.Context(
+            table: scan.table,
+            executablePaths: scan.executablePaths,
+            sessions: scan.sessions,
+            pastSessions: scan.pastSessions
         )
         // A listener that no dev tree claimed, and that lives in an app
         // bundle, is filed under that app's main process.
@@ -91,12 +114,12 @@ public struct StrayBuilder: Sendable {
             let root = scan.details[rootPID] ?? ProcessDetails(entry: rootEntry, isInspectable: false)
             let descendants = memberEntries.map { scan.details[$0.pid] ?? ProcessDetails(entry: $0, isInspectable: false) }
             let group = ProcessGroup(root: root, descendants: descendants, runtime: scan.devProcesses[rootPID])
-            return makeStray(group: group, portsByPID: portsByPID)
+            return makeStray(group: group, portsByPID: portsByPID, context: context)
         }
         .sorted(by: Self.newestFirst)
     }
 
-    private func makeStray(group: ProcessGroup, portsByPID: [Int32: [ListeningPort]]) -> Stray {
+    private func makeStray(group: ProcessGroup, portsByPID: [Int32: [ListeningPort]], context: AttributionEngine.Context) -> Stray {
         let root = group.root
         let members = group.members
         let ports = members.flatMap { portsByPID[$0.pid] ?? [] }
@@ -110,6 +133,10 @@ public struct StrayBuilder: Sendable {
             category = .app
         }
 
+        // Only dev processes are attributed: where Safari came from is not
+        // a question anyone asks.
+        let attributed = group.runtime == nil ? nil : attribution?.origin(of: root, in: context)
+
         let (title, subtitle) = naming(for: group)
         return Stray(
             id: "process:\(root.identity.key)",
@@ -118,12 +145,19 @@ public struct StrayBuilder: Sendable {
             title: title,
             subtitle: subtitle,
             ports: PortSummary.summarize(ports),
-            project: project(for: group),
-            origin: .unknown,
+            project: project(for: group) ?? project(for: attributed?.session),
+            origin: attributed?.origin ?? .unknown,
             startedAt: root.identity.startDate,
             cpuPercent: members.reduce(0) { $0 + $1.cpuPercent },
-            memoryBytes: members.reduce(0) { $0 + $1.residentBytes }
+            memoryBytes: members.reduce(0) { $0 + $1.residentBytes },
+            agentSession: attributed?.session
         )
+    }
+
+    /// A process that is not inside a project itself most likely belongs to
+    /// the project its agent session was working in.
+    private func project(for session: AgentSession?) -> Project? {
+        session?.cwd.flatMap { projectResolver.project(forDirectory: $0) }
     }
 
     /// A dev process is named by its command. An app is named by its bundle,

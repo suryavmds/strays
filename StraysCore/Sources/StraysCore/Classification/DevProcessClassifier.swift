@@ -92,13 +92,34 @@ public struct DevProcessClassifier: Sendable {
     }
 
     /// Phase 2: the full check, including where the process is running.
-    public func classify(_ details: ProcessDetails, now: Date = Date()) -> DevClassification? {
+    ///
+    /// The "inside the home folder" rule exists to keep unrelated runtimes
+    /// out of the list. It is waived when there is independent evidence
+    /// that this is the developer's process: it listens on a port, or an AI
+    /// agent started it. A dev server an agent launched in `/tmp` counts.
+    ///
+    /// - Parameters:
+    ///   - listens: the process holds a listening TCP port. Shown at once.
+    ///   - startedByAgent: an agent is among its ancestors, or left its
+    ///     marker in the environment.
+    public func classify(
+        _ details: ProcessDetails,
+        now: Date = Date(),
+        listens: Bool = false,
+        startedByAgent: Bool = false
+    ) -> DevClassification? {
         guard details.isInspectable,
-              let classification = runtime(forExecutablePath: details.executablePath, name: details.entry.name),
-              let cwd = details.cwd, isEligibleWorkingDirectory(cwd)
+              let classification = runtime(forExecutablePath: details.executablePath, name: details.entry.name)
         else { return nil }
 
-        if now.timeIntervalSince(details.identity.startDate) < minimumAge { return nil }
+        if listens || startedByAgent {
+            // Still not from inside an app bundle or a tool's private folder.
+            if let cwd = details.cwd, ignoredCwds.matches((cwd as NSString).standardizingPath) { return nil }
+        } else {
+            guard let cwd = details.cwd, isEligibleWorkingDirectory(cwd) else { return nil }
+        }
+
+        if !listens, now.timeIntervalSince(details.identity.startDate) < minimumAge { return nil }
         if !details.arguments.isEmpty, ignoredCommandLines.matches(details.arguments.joined(separator: " ")) {
             return nil
         }
