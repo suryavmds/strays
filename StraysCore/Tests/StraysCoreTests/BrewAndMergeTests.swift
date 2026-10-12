@@ -57,7 +57,7 @@ final class BrewServicesParserTests: XCTestCase {
 }
 
 /// Records `brew` invocations instead of running anything.
-private actor FakeBrew {
+actor FakeBrew {
     private(set) var calls: [[String]] = []
     private var responses: [String: SubprocessResult] = [:]
 

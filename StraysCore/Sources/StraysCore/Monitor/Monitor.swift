@@ -89,6 +89,10 @@ public actor Monitor {
     private let attribution: AttributionEngine
     private let currentUID = getuid()
 
+    /// Processes Strays started for stack command items, by item id.
+    private var launched: [UUID: ProcessIdentity]
+    private let stackStore: StackStore?
+
     private var staleTracker = StaleTracker()
     /// Agent sessions seen on the previous scan, to notice the ones that exit.
     private var knownSessions: [Int32: AgentSession] = [:]
@@ -110,8 +114,11 @@ public actor Monitor {
         sources: Sources = .all,
         dockerCollector: DockerCollector? = nil,
         brewCollector: BrewCollector? = nil,
-        agents: AgentCatalog = .bundled
+        agents: AgentCatalog = .bundled,
+        stackStore: StackStore? = nil
     ) {
+        self.stackStore = stackStore
+        launched = stackStore?.loadLaunched() ?? [:]
         let resolver = ProjectResolver(homeDirectory: homeDirectory)
         let engine = AttributionEngine(catalog: agents)
         attribution = engine
@@ -339,6 +346,27 @@ public actor Monitor {
                 !table.ancestors(of: session.pid).contains { sessions[$0.pid]?.agentID == session.agentID }
             }
             .sorted { $0.identity.startDate > $1.identity.startDate }
+    }
+
+    // MARK: - Processes started for stacks
+
+    /// The process Strays started for a command item, if it is still that
+    /// same process. A dead or recycled PID is forgotten.
+    func launchedIdentity(for item: StackItem) -> ProcessIdentity? {
+        guard let identity = launched[item.id] else { return nil }
+        if LibProc.entry(for: identity.pid)?.identity == identity { return identity }
+        forgetLaunched(for: item)
+        return nil
+    }
+
+    func rememberLaunched(_ identity: ProcessIdentity, for item: StackItem) {
+        launched[item.id] = identity
+        stackStore?.save(launched: launched)
+    }
+
+    func forgetLaunched(for item: StackItem) {
+        guard launched.removeValue(forKey: item.id) != nil else { return }
+        stackStore?.save(launched: launched)
     }
 
     // MARK: - Inspecting one process

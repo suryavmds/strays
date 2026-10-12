@@ -69,9 +69,21 @@ public enum ProcessLauncher {
         var attributes: posix_spawnattr_t?
         posix_spawnattr_init(&attributes)
         defer { posix_spawnattr_destroy(&attributes) }
+
+        // Ignored signals and the signal mask are inherited across spawn.
+        // Without a reset, a process started while we happened to ignore
+        // SIGTERM would ignore it too, and could then only be force killed.
+        var everySignal = sigset_t()
+        sigfillset(&everySignal)
+        posix_spawnattr_setsigdefault(&attributes, &everySignal)
+        var noSignals = sigset_t()
+        sigemptyset(&noSignals)
+        posix_spawnattr_setsigmask(&attributes, &noSignals)
+
         // A new session, so the process outlives Strays and owns its own
         // process group. Close everything we did not explicitly hand over.
-        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETSID | POSIX_SPAWN_CLOEXEC_DEFAULT))
+        let flags = POSIX_SPAWN_SETSID | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK
+        posix_spawnattr_setflags(&attributes, Int16(flags))
 
         let argv = arguments.map { strdup($0) } + [nil]
         let envp = environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
@@ -83,7 +95,23 @@ public enum ProcessLauncher {
         var pid: pid_t = 0
         let status = posix_spawn(&pid, executable, &actions, &attributes, argv, envp)
         guard status == 0 else { throw LaunchError.spawnFailed(errno: status) }
+        reapWhenItExits(pid)
         return pid
+    }
+
+    /// We are the parent of what we launch, so we must collect its exit
+    /// status, or it would linger as a zombie for as long as Strays runs.
+    private static func reapWhenItExits(_ pid: pid_t) {
+        let source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .global(qos: .utility))
+        source.setEventHandler {
+            var status: Int32 = 0
+            waitpid(pid, &status, WNOHANG)
+            source.cancel()
+        }
+        source.resume()
+        // It may already have exited, before the source was watching.
+        var status: Int32 = 0
+        if waitpid(pid, &status, WNOHANG) == pid { source.cancel() }
     }
 
     static func shellQuoted(_ argument: String) -> String {

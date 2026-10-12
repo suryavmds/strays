@@ -207,6 +207,36 @@ final class ProcessLauncherTests: XCTestCase {
         XCTAssertTrue(hasEnvironment, "falls back to our own environment")
     }
 
+    /// A launched process must be stoppable with SIGTERM whatever signals
+    /// the launching process ignores. Dispositions are inherited across
+    /// spawn unless they are reset.
+    func testLaunchedProcessDoesNotInheritIgnoredSignals() async throws {
+        let previous = signal(SIGTERM, SIG_IGN)
+        defer { signal(SIGTERM, previous) }
+
+        let pid = try ProcessLauncher.launch(
+            executable: ThrowawayProcess.python,
+            arguments: [ThrowawayProcess.python, "-c", "import time; time.sleep(60)"],
+            cwd: nil,
+            environment: ProcessInfo.processInfo.environment
+        )
+        addTeardownBlock { kill(pid, SIGKILL) }
+        let entry = try XCTUnwrap(LibProc.entry(for: pid))
+
+        let result = await ProcessController(gracePeriod: 5).stop([SignalTarget(identity: entry.identity, name: entry.name, uid: entry.uid)])
+        XCTAssertTrue(result.allExited, "SIGTERM must work on what we launch: \(result)")
+    }
+
+    func testLaunchedProcessIsReapedWhenItExits() async throws {
+        let pid = try ProcessLauncher.launch(executable: "/usr/bin/true", arguments: ["true"], cwd: nil, environment: [:])
+        // Once reaped, the PID is no longer our child at all.
+        let reaped = await eventually(timeout: 5) {
+            var status: Int32 = 0
+            return waitpid(pid, &status, WNOHANG) == -1 && errno == ECHILD
+        }
+        XCTAssertTrue(reaped, "the exited child was left as a zombie")
+    }
+
     func testLaunchReportsAMissingExecutable() {
         XCTAssertThrowsError(try ProcessLauncher.launch(executable: "/nonexistent/tool", arguments: ["tool"], cwd: nil, environment: [:])) { error in
             guard case LaunchError.spawnFailed = error else { return XCTFail("\(error)") }
