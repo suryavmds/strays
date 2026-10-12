@@ -80,6 +80,12 @@ enum SnapshotRenderer {
             }
             renderWindow(pane.environment(model), size: CGSize(width: 1180, height: 760), scheme: .dark, to: directory.appendingPathComponent("dashboard-\(name)-dark.png"))
         }
+        // The stop animation, frozen at four moments.
+        if let subject = model.activeStrays.first {
+            let frames = DissolveFrames(stray: subject).environment(model)
+            renderWindow(frames, size: CGSize(width: 1240, height: 250), scheme: .dark, to: directory.appendingPathComponent(Shaders.isAvailable ? "dissolve-shader-dark.png" : "dissolve-fallback-dark.png"))
+        }
+
         // Nothing running at all: the empty states and their illustration.
         let quiet = AppModel(demo: StraysSnapshot(strays: [], capturedAt: Date(), isDockerAvailable: false, isBrewAvailable: true))
         render(popoverCanvas(quiet), size: CGSize(width: 372, height: 300), scheme: .dark, to: directory.appendingPathComponent("popover-empty-dark.png"))
@@ -193,6 +199,30 @@ enum SnapshotRenderer {
         render(view, size: CGSize(width: 520, height: 140), scheme: .dark, to: url)
     }
 }
+/// One card at four points of the dissolve, left to right.
+private struct DissolveFrames: View {
+    let stray: Stray
+    @Namespace private var selection
+
+    var body: some View {
+        HStack(spacing: 16) {
+            ForEach([0.0, 0.3, 0.55, 0.8], id: \.self) { progress in
+                VStack(spacing: 8) {
+                    StrayCard(stray: stray, isSelected: false, selection: selection) {}
+                        .dissolveFrame(progress)
+                        .frame(width: 280)
+                    Text(verbatim: "\(Int(progress * 100))%")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(white: 0.12))
+    }
+}
+
 /// A window that AppKit will not drag back onto a screen.
 private final class OffscreenWindow: NSWindow {
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }

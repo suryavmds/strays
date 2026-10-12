@@ -91,6 +91,21 @@ extension AnyTransition {
     }
 }
 
+#if DEBUG
+extension View {
+    /// The dissolve frozen at one point, for the snapshot renderer: a
+    /// transition cannot be photographed, but a single frame of it can.
+    @ViewBuilder
+    func dissolveFrame(_ progress: Double) -> some View {
+        if let library = Shaders.library {
+            modifier(ShaderDissolve(progress: progress, library: library))
+        } else {
+            modifier(EvaporateDissolve(progress: progress))
+        }
+    }
+}
+#endif
+
 // MARK: - Heartbeat
 
 /// A soft, slow pulse of light behind something that is busy. Still when
