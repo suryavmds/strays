@@ -1,0 +1,68 @@
+name: Strays
+
+options:
+  bundleIdPrefix: com.suryavmds
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    # Local and CI builds are ad-hoc signed ("Sign to Run Locally").
+    # The release workflow overrides these with the Developer ID identity.
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    ENABLE_HARDENED_RUNTIME: YES
+    DEAD_CODE_STRIPPING: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+
+packages:
+  StraysCore:
+    path: StraysCore
+
+targets:
+  Strays:
+    type: application
+    platform: macOS
+    sources:
+      - path: Strays
+    dependencies:
+      - package: StraysCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.suryavmds.strays
+        PRODUCT_NAME: Strays
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Strays
+        # Menu bar app: no Dock icon until the dashboard window is opened.
+        INFOPLIST_KEY_LSUIElement: YES
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        INFOPLIST_KEY_NSHumanReadableCopyright: "MIT License. Copyright © 2026 Surya Prakash."
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # No App Sandbox: Strays inspects other processes, sends signals,
+        # and talks to the Docker socket. Distributed outside the Mac App Store.
+        ENABLE_APP_SANDBOX: NO
+      configs:
+        Release:
+          ONLY_ACTIVE_ARCH: NO
+          SWIFT_COMPILATION_MODE: wholemodule
+
+schemes:
+  Strays:
+    build:
+      targets:
+        Strays: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - package: StraysCore/StraysCoreTests
+    archive:
+      config: Release
