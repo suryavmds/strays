@@ -13,6 +13,9 @@ public struct ProcessScan: Sendable {
     public var boundaries: Set<Int32>
     /// For processes inside an app bundle: the app's main process.
     public var appRoots: [Int32: Int32]
+    /// Processes that, like dev processes, stand for their whole subtree:
+    /// the main process of a Homebrew service, for one.
+    public var subtreeOwners: Set<Int32>
 
     public init(
         table: ProcessTable,
@@ -20,7 +23,8 @@ public struct ProcessScan: Sendable {
         details: [Int32: ProcessDetails],
         devProcesses: [Int32: DevClassification],
         boundaries: Set<Int32> = [],
-        appRoots: [Int32: Int32] = [:]
+        appRoots: [Int32: Int32] = [:],
+        subtreeOwners: Set<Int32> = []
     ) {
         self.table = table
         self.ports = ports
@@ -28,6 +32,7 @@ public struct ProcessScan: Sendable {
         self.devProcesses = devProcesses
         self.boundaries = boundaries
         self.appRoots = appRoots
+        self.subtreeOwners = subtreeOwners
     }
 }
 
@@ -55,19 +60,20 @@ public struct StrayBuilder: Sendable {
         // something we already list, but do not make a process interesting.
         let tcpListeners = Set(scan.ports.lazy.filter { $0.transport == .tcp }.map(\.pid))
         let devPIDs = Set(scan.devProcesses.keys)
-        let interesting = tcpListeners.union(devPIDs)
+        let owners = devPIDs.union(scan.subtreeOwners)
+        let interesting = tcpListeners.union(owners)
             .subtracting(excludedPIDs)
             .filter { scan.table[$0] != nil }
 
         var roots = ProcessGrouper.roots(
             of: interesting,
-            absorbing: devPIDs.subtracting(excludedPIDs),
+            absorbing: owners.subtracting(excludedPIDs),
             boundaries: scan.boundaries.union(excludedPIDs),
             in: scan.table
         )
         // A listener that no dev tree claimed, and that lives in an app
         // bundle, is filed under that app's main process.
-        for pid in interesting where roots[pid] == pid && !devPIDs.contains(pid) {
+        for pid in interesting where roots[pid] == pid && !owners.contains(pid) {
             if let appRoot = scan.appRoots[pid], scan.table[appRoot] != nil, !excludedPIDs.contains(appRoot) {
                 roots[pid] = appRoot
             }
@@ -79,7 +85,7 @@ public struct StrayBuilder: Sendable {
             // A dev process owns its whole subtree. An app is its main
             // process plus the helpers that hold its ports; whatever else it
             // spawned is its own business.
-            let memberEntries = devPIDs.contains(rootPID)
+            let memberEntries = owners.contains(rootPID)
                 ? scan.table.descendants(of: rootPID)
                 : members.filter { $0 != rootPID }.compactMap { scan.table[$0] }
             let root = scan.details[rootPID] ?? ProcessDetails(entry: rootEntry, isInspectable: false)

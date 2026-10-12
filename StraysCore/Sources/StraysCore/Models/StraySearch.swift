@@ -14,6 +14,15 @@ extension Stray {
             parts.append(port.transport.rawValue)
         }
         if isLANVisible { parts.append("lan") }
+        if let container {
+            parts += [container.image, container.shortID, container.status, "docker", "container"]
+            if let compose = container.composeProject { parts.append(compose) }
+            if let service = container.composeService { parts.append(service) }
+        }
+        if let brewService {
+            parts += ["brew", "homebrew", "service", brewService.statusLabel]
+            if let command = brewService.command { parts.append(command) }
+        }
         if let group = processGroup {
             parts.append(String(group.root.pid))
             parts.append(group.root.arguments.joined(separator: " "))

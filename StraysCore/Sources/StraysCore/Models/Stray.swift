@@ -53,6 +53,10 @@ public struct Stray: Identifiable, Sendable, Equatable {
 
     public enum Kind: Sendable, Equatable {
         case process(ProcessGroup)
+        case container(DockerContainer)
+        /// A Homebrew service, with its process tree when it is running and
+        /// we found it.
+        case brewService(BrewService, process: ProcessGroup?)
     }
 
     public let id: String
@@ -68,6 +72,9 @@ public struct Stray: Identifiable, Sendable, Equatable {
     /// Summed over the whole process tree. 100 means one full core.
     public var cpuPercent: Double
     public var memoryBytes: UInt64
+    /// False for a stopped container or a stopped Homebrew service, which
+    /// are listed so they can be started again.
+    public var isRunning: Bool
 
     public init(
         id: String,
@@ -80,7 +87,8 @@ public struct Stray: Identifiable, Sendable, Equatable {
         origin: Origin = .unknown,
         startedAt: Date? = nil,
         cpuPercent: Double = 0,
-        memoryBytes: UInt64 = 0
+        memoryBytes: UInt64 = 0,
+        isRunning: Bool = true
     ) {
         self.id = id
         self.kind = kind
@@ -93,10 +101,24 @@ public struct Stray: Identifiable, Sendable, Equatable {
         self.startedAt = startedAt
         self.cpuPercent = cpuPercent
         self.memoryBytes = memoryBytes
+        self.isRunning = isRunning
     }
 
     public var processGroup: ProcessGroup? {
-        if case let .process(group) = kind { return group }
+        switch kind {
+        case let .process(group): group
+        case let .brewService(_, process): process
+        case .container: nil
+        }
+    }
+
+    public var container: DockerContainer? {
+        if case let .container(container) = kind { return container }
+        return nil
+    }
+
+    public var brewService: BrewService? {
+        if case let .brewService(service, _) = kind { return service }
         return nil
     }
 

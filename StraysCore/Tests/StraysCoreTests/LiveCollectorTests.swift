@@ -191,7 +191,7 @@ final class MonitorLiveTests: XCTestCase {
     private var projectURL: URL { home.url.appendingPathComponent("code/fixture") }
 
     private func monitor() -> Monitor {
-        Monitor(homeDirectory: home.path, minimumAge: 0, includeOtherUsers: false)
+        Monitor(homeDirectory: home.path, minimumAge: 0, sources: [])
     }
 
     func testServerInAProjectIsADevStrayWithItsPort() async throws {

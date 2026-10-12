@@ -163,9 +163,12 @@ public struct ProcessController: Sendable {
 }
 
 extension Stray {
-    /// The process a Stop on this stray is aimed at.
+    /// The process a Stop on this stray is aimed at. Nil for containers and
+    /// Homebrew services: those are stopped through Docker and `brew`, never
+    /// by signalling, or launchd would simply start the service again.
     public var signalRoot: SignalTarget? {
-        processGroup.map { SignalTarget($0.root) }
+        guard case let .process(group) = kind else { return nil }
+        return SignalTarget(group.root)
     }
 
     public var stopPolicy: StopPolicy? {
