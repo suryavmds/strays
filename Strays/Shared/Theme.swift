@@ -32,6 +32,13 @@ enum Theme {
 extension Stray {
     /// `Node.js · 2h 14m`, plus load figures once they are worth reading.
     func statusLine(now: Date = Date()) -> String {
+        if !isRunning {
+            // "Exited (0) 3 days ago" says more than an uptime of nothing.
+            guard let container else { return brewService?.statusLabel ?? "Stopped" }
+            return [subtitle, container.status.isEmpty ? "Stopped" : container.status]
+                .compactMap { $0 }
+                .joined(separator: " · ")
+        }
         var parts: [String] = []
         if let subtitle { parts.append(subtitle) }
         parts.append(StraysFormat.uptime(since: startedAt, now: now))

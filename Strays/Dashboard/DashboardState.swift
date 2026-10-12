@@ -7,6 +7,10 @@ enum SidebarItem: Hashable {
     /// Everything with a port, ordered by port number.
     case ports
     case project(String)
+    /// Every container, running or stopped.
+    case docker
+    /// Every Homebrew service, started or stopped.
+    case brew
     /// Apps and system daemons that listen on a port.
     case others
 }
@@ -42,6 +46,8 @@ struct StraySection: Identifiable {
     let symbol: String
     let project: Project?
     let strays: [Stray]
+    /// Set when the section is one compose project, which can be stopped whole.
+    var composeProject: String?
 }
 
 /// The dashboard window's own state: where the user is and what they picked.
@@ -81,6 +87,8 @@ final class DashboardState {
         case .all: "All"
         case .ports: "Listening Ports"
         case .others: "Apps & System"
+        case .docker: "Docker"
+        case .brew: "Brew Services"
         case let .project(id): model.projectGroups.first { $0.id == id }?.title ?? "Project"
         }
     }
@@ -103,6 +111,13 @@ final class DashboardState {
             sections = [StraySection(id: "ports", title: "By port number", symbol: "point.3.connected.trianglepath.dotted", project: nil, strays: listening)]
         case .others:
             sections = [StraySection(id: "others", title: "Apps & System", symbol: "macwindow.on.rectangle", project: nil, strays: model.otherListeners)]
+        case .docker:
+            sections = Self.dockerSections(model.containers)
+        case .brew:
+            sections = [
+                StraySection(id: "brew-running", title: "Started", symbol: "mug.fill", project: nil, strays: model.brewServices.filter(\.isRunning)),
+                StraySection(id: "brew-stopped", title: "Stopped", symbol: "mug", project: nil, strays: model.brewServices.filter { !$0.isRunning }),
+            ]
         case let .project(id):
             sections = model.projectGroups.filter { $0.id == id }.map(Self.section(for:))
         }
@@ -111,7 +126,7 @@ final class DashboardState {
         guard !query.isEmpty else { return sections.filter { !$0.strays.isEmpty } }
         return sections.compactMap { section in
             let matching = section.strays.filter { $0.matches(query: query) }
-            return matching.isEmpty ? nil : StraySection(id: section.id, title: section.title, symbol: section.symbol, project: section.project, strays: matching)
+            return matching.isEmpty ? nil : StraySection(id: section.id, title: section.title, symbol: section.symbol, project: section.project, strays: matching, composeProject: section.composeProject)
         }
     }
 
@@ -119,13 +134,37 @@ final class DashboardState {
         sections(in: model).flatMap(\.strays)
     }
 
+    /// Containers by compose project, running projects first, with loose
+    /// containers at the end.
+    private static func dockerSections(_ containers: [Stray]) -> [StraySection] {
+        var order: [String] = []
+        var buckets: [String: [Stray]] = [:]
+        for stray in containers {
+            let key = stray.container?.composeProject ?? ""
+            if buckets[key] == nil { order.append(key) }
+            buckets[key, default: []].append(stray)
+        }
+        return order.sorted { ($0.isEmpty ? 1 : 0, $0) < ($1.isEmpty ? 1 : 0, $1) }.map { key in
+            let strays = buckets[key] ?? []
+            return StraySection(
+                id: "compose:\(key)",
+                title: key.isEmpty ? "Standalone containers" : key,
+                symbol: key.isEmpty ? "shippingbox" : "square.stack.3d.up.fill",
+                project: key.isEmpty ? nil : strays.first?.project,
+                strays: strays,
+                composeProject: key.isEmpty ? nil : key
+            )
+        }
+    }
+
     private static func section(for group: StrayGroup) -> StraySection {
         StraySection(
             id: group.id,
             title: group.title,
-            symbol: group.project == nil ? "questionmark.folder" : "folder.fill",
+            symbol: group.symbol,
             project: group.project,
-            strays: group.strays
+            strays: group.strays,
+            composeProject: group.composeProject
         )
     }
 }

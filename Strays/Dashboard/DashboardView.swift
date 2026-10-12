@@ -82,14 +82,30 @@ struct DashboardView: View {
     }
 
     @ViewBuilder private var emptyState: some View {
-        if state.searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+        if !state.searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+            ContentUnavailableView.search(text: state.searchText)
+        } else if state.sidebar == .docker {
+            ContentUnavailableView(
+                model.snapshot.isDockerAvailable ? "No containers" : "Docker isn’t running",
+                systemImage: "shippingbox",
+                description: Text(model.snapshot.isDockerAvailable
+                    ? "Containers you create will show up here, running or stopped."
+                    : "Start Docker Desktop, OrbStack, or Colima and your containers will appear here.")
+            )
+        } else if state.sidebar == .brew {
+            ContentUnavailableView(
+                model.snapshot.isBrewAvailable ? "No Homebrew services" : "Homebrew isn’t installed",
+                systemImage: "mug",
+                description: Text(model.snapshot.isBrewAvailable
+                    ? "Formulae with a service, like Redis or Postgres, show up here once installed."
+                    : "Services managed with brew services would be listed here.")
+            )
+        } else {
             ContentUnavailableView(
                 "Nothing running here",
                 systemImage: "pawprint",
                 description: Text("Dev servers, watchers, and whatever your coding agents leave behind will show up as soon as they start.")
             )
-        } else {
-            ContentUnavailableView.search(text: state.searchText)
         }
     }
 

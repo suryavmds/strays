@@ -22,8 +22,14 @@ await monitor.refresh()
 try? await Task.sleep(for: .milliseconds(400))
 let snapshot = await monitor.refresh()
 
-print(pad("CATEGORY", 9) + pad("PID", 7) + pad("CPU%", 7) + pad("MEM", 9) + pad("PORTS", 22) + pad("PROJECT", 22) + "COMMAND")
-for stray in snapshot.strays where includeAll || stray.category == .dev {
+/// By default: what you left running. With --all: apps, system daemons,
+/// and stopped containers and services too.
+func isShown(_ stray: Stray) -> Bool {
+    includeAll || (stray.isRunning && [.dev, .docker, .brew].contains(stray.category))
+}
+
+print(pad("CATEGORY", 9) + pad("PID", 7) + pad("CPU%", 7) + pad("MEM", 9) + pad("PORTS", 22) + pad("PROJECT", 22) + "NAME")
+for stray in snapshot.strays where isShown(stray) {
     let pid = stray.processGroup.map { String($0.root.pid) } ?? "-"
     let memory = ByteCountFormatter.string(fromByteCount: Int64(stray.memoryBytes), countStyle: .memory)
     let members = stray.processGroup.map { $0.members.count } ?? 1
@@ -31,8 +37,8 @@ for stray in snapshot.strays where includeAll || stray.category == .dev {
     print(
         pad(stray.category.rawValue, 9) + pad(pid, 7) + pad(String(format: "%.1f", stray.cpuPercent), 7)
             + pad(memory, 9) + pad(describe(stray.ports), 22) + pad(stray.project?.name ?? "-", 22)
-            + stray.title + suffix
+            + stray.title + suffix + (stray.isRunning ? "" : "  [stopped]")
     )
 }
-let shown = snapshot.strays.filter { includeAll || $0.category == .dev }.count
-print("\n\(shown) shown of \(snapshot.strays.count) · scan took \(Int(snapshot.scanDuration * 1000)) ms · '!' marks LAN-visible ports" + (includeAll ? "" : " · --all for apps and system"))
+let shown = snapshot.strays.filter(isShown).count
+print("\n\(shown) shown of \(snapshot.strays.count) · scan took \(Int(snapshot.scanDuration * 1000)) ms · '!' marks LAN-visible ports" + (includeAll ? "" : " · --all for everything"))

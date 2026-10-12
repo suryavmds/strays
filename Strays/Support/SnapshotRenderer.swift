@@ -37,7 +37,7 @@ enum SnapshotRenderer {
                 let dashboard = DashboardView { state in
                     state.persistsViewMode = false
                     state.viewMode = mode
-                    state.selection = model.devStrays.first?.id ?? model.snapshot.strays.first?.id
+                    state.selection = model.activeStrays.first?.id ?? model.snapshot.strays.first?.id
                 }
                 renderWindow(dashboard.environment(model), size: CGSize(width: 1180, height: 760), scheme: .dark, to: directory.appendingPathComponent("live-dashboard-\(mode.rawValue).png"))
             }
@@ -57,6 +57,13 @@ enum SnapshotRenderer {
             }
         }
         let model = AppModel(demo: DemoData.snapshot)
+        let docker = DashboardView { state in
+            state.persistsViewMode = false
+            state.viewMode = .cards
+            state.sidebar = .docker
+            state.selection = model.containers.first?.id
+        }
+        renderWindow(docker.environment(model), size: CGSize(width: 1180, height: 760), scheme: .dark, to: directory.appendingPathComponent("dashboard-docker-dark.png"))
         let palette = DashboardView { state in
             state.persistsViewMode = false
             state.viewMode = .cards

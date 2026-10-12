@@ -19,6 +19,7 @@ struct StrayTableView: View {
                     Text(stray.title)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .foregroundStyle(stray.isRunning ? .primary : .secondary)
                         .help(stray.subtitle.map { "\(stray.title) · \($0)" } ?? stray.title)
                 }
             }
@@ -53,9 +54,9 @@ struct StrayTableView: View {
             .width(min: 52, ideal: 62)
 
             TableColumn("Uptime", value: \.startDate) { stray in
-                Text(StraysFormat.uptime(since: stray.startedAt))
+                Text(stray.isRunning ? StraysFormat.uptime(since: stray.startedAt) : "stopped")
                     .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(stray.isRunning ? .secondary : .tertiary)
             }
             .width(min: 58, ideal: 68)
 
@@ -76,6 +77,11 @@ struct StrayTableView: View {
             }
         }
         .scrollContentBackground(.hidden)
+        // A table has no per-row appearance callback, so everything it
+        // lists is treated as visible.
+        .onAppear { strays.forEach { model.setVisible(true, $0) } }
+        .onChange(of: strays.map(\.id)) { strays.forEach { model.setVisible(true, $0) } }
+        .onDisappear { strays.forEach { model.setVisible(false, $0) } }
     }
 
     /// Selecting a row also opens the inspector.

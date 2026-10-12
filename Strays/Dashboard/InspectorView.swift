@@ -48,8 +48,13 @@ private struct InspectorContent: View {
             header
             actions
             ActivityPrompt(stray: stray)
-            charts
+            if stray.isRunning { charts }
             if !stray.ports.isEmpty { portsSection }
+            if let container = stray.container {
+                containerSection(container)
+                ContainerLogsSection(stray: stray)
+            }
+            if let service = stray.brewService { serviceSection(service) }
             if let root { detailsSection(root) }
             if let root, !root.arguments.isEmpty { commandSection(root) }
             if let root { environmentSection(root) }
@@ -77,7 +82,7 @@ private struct InspectorContent: View {
                 HStack(spacing: 5) {
                     Badge(text: stray.categoryLabel, color: accent)
                     if let subtitle = stray.subtitle { Badge(text: subtitle, color: .secondary) }
-                    if stray.isLANVisible { Badge(text: "On your network", color: Theme.lan, symbol: "wifi.exclamationmark") }
+                    if stray.isLANVisible { Badge(text: "On LAN", color: Theme.lan, symbol: "wifi.exclamationmark") }
                 }
             }
             Spacer(minLength: 0)
@@ -85,16 +90,28 @@ private struct InspectorContent: View {
     }
 
     private var actions: some View {
+        // Two labelled primary actions; the rest are icons, so nothing
+        // has to truncate in a narrow inspector.
         HStack(spacing: 8) {
             if let port = stray.primaryPort, port.transport == .tcp {
                 ActionButton(title: "Open", symbol: "safari", tint: accent) { model.open(port) }
-                ActionButton(title: "Copy URL", symbol: "doc.on.doc") { model.copyURL(of: port) }
+            }
+            if stray.canBeStarted {
+                ActionButton(title: progress ?? "Start", symbol: "play.fill", tint: .green) { model.start(stray) }
+                    .disabled(progress != nil)
             }
             if stray.canBeStopped {
-                ActionButton(title: isStopping ? "Stopping…" : "Stop", symbol: "stop.fill", tint: Theme.lan) {
+                ActionButton(title: progress ?? "Stop", symbol: "stop.fill", tint: Theme.lan) {
                     model.requestStop(stray)
                 }
-                .disabled(isStopping)
+                .disabled(progress != nil)
+            }
+            if let port = stray.primaryPort, port.transport == .tcp {
+                IconActionButton(symbol: "doc.on.doc", label: "Copy http://localhost:\(port.port)") { model.copyURL(of: port) }
+            }
+            if stray.canBeRestarted, stray.category != .dev {
+                IconActionButton(symbol: "arrow.clockwise", label: "Restart") { model.restart(stray) }
+                    .disabled(progress != nil)
             }
             Menu {
                 StrayContextMenu(stray: stray)
@@ -109,9 +126,9 @@ private struct InspectorContent: View {
         }
     }
 
-    private var isStopping: Bool {
-        let activity = model.activity(for: stray)
-        return activity == .stopping || activity == .killing
+    /// "Stopping…", "Starting…" and so on, while an action is in flight.
+    private var progress: String? {
+        model.activity(for: stray)?.progressLabel
     }
 
     // MARK: - Sections
@@ -126,17 +143,67 @@ private struct InspectorContent: View {
     private var portsSection: some View {
         InspectorSection(title: "Ports", symbol: "point.3.connected.trianglepath.dotted") {
             ForEach(stray.ports) { port in
-                HStack(spacing: 8) {
+                HStack(alignment: .top, spacing: 8) {
                     PortChip(port: port, tint: accent)
-                    Text(port.addresses.joined(separator: ", "))
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    Spacer()
-                    Text(port.isLANVisible ? "Reachable from your network" : "This Mac only")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(port.isLANVisible ? AnyShapeStyle(Theme.lan) : AnyShapeStyle(.tertiary))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(portDetail(port))
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                        Text(port.isLANVisible ? "Reachable from your network" : "This Mac only")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(port.isLANVisible ? AnyShapeStyle(Theme.lan) : AnyShapeStyle(.tertiary))
+                    }
+                    Spacer(minLength: 0)
                 }
+            }
+        }
+    }
+
+    /// The bind addresses, and for a container the port it maps to inside.
+    private func portDetail(_ port: PortSummary) -> String {
+        let addresses = port.addresses.joined(separator: ", ")
+        guard let mapping = stray.container?.ports.first(where: { $0.hostPort == port.port && $0.transport == port.transport }) else {
+            return addresses
+        }
+        return "\(addresses) → container port \(mapping.containerPort)"
+    }
+
+    private func containerSection(_ container: DockerContainer) -> some View {
+        InspectorSection(title: "Container", symbol: "shippingbox") {
+            DetailRow(label: "Status", value: container.status.isEmpty ? (container.isRunning ? "Running" : "Stopped") : container.status)
+            DetailRow(label: "Image", value: container.image)
+            DetailRow(label: "ID", value: container.shortID)
+            if let compose = container.composeProject {
+                DetailRow(label: "Compose", value: container.composeService.map { "\(compose) / \($0)" } ?? compose)
+            }
+            if let directory = container.composeWorkingDirectory {
+                DetailRow(label: "Directory", value: (directory as NSString).abbreviatingWithTildeInPath) { model.reveal(path: directory) }
+            }
+            if !container.command.isEmpty {
+                DetailRow(label: "Command", value: container.command)
+            }
+            DetailRow(label: "Created", value: container.createdAt.formatted(.dateTime.month(.abbreviated).day().hour().minute()))
+        }
+    }
+
+    private func serviceSection(_ service: BrewService) -> some View {
+        InspectorSection(title: "Homebrew service", symbol: "mug") {
+            DetailRow(label: "Status", value: service.statusLabel)
+            if let label = service.serviceName { DetailRow(label: "launchd", value: label) }
+            if let user = service.user { DetailRow(label: "Runs as", value: user) }
+            if let file = service.file {
+                DetailRow(label: "Plist", value: (file as NSString).abbreviatingWithTildeInPath) {
+                    model.reveal(path: (file as NSString).deletingLastPathComponent)
+                }
+            }
+            if let command = service.command, stray.processGroup == nil {
+                DetailRow(label: "Command", value: command)
+            }
+            if service.isRunning, stray.processGroup == nil {
+                Text("Started, but Strays could not find its process, so there are no ports or load figures.")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.tertiary)
             }
         }
     }
@@ -248,6 +315,85 @@ private struct InspectorContent: View {
     }
 }
 
+// MARK: - Container logs
+
+/// The last 200 lines of a container's output, fetched on demand.
+private struct ContainerLogsSection: View {
+    let stray: Stray
+    @Environment(AppModel.self) private var model
+
+    private enum Phase: Equatable {
+        case idle
+        case loading
+        case loaded(String)
+        case failed(String)
+    }
+
+    @State private var phase: Phase = .idle
+
+    var body: some View {
+        InspectorSection(title: "Logs", symbol: "text.alignleft") {
+            switch phase {
+            case .idle:
+                Button("Show Last 200 Lines") { load() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            case .loading:
+                ProgressView()
+                    .controlSize(.small)
+            case let .loaded(text):
+                if text.isEmpty {
+                    Text("No output yet.")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.tertiary)
+                } else {
+                    logView(text)
+                }
+            case let .failed(message):
+                Text(message)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.lan)
+            }
+        } accessory: {
+            if case let .loaded(text) = phase {
+                SectionButton(symbol: "doc.on.doc", label: "Copy logs") { model.copy(text, label: "logs") }
+                SectionButton(symbol: "arrow.clockwise", label: "Reload logs") { load() }
+            }
+        }
+    }
+
+    private func logView(_ text: String) -> some View {
+        ScrollViewReader { proxy in
+            ScrollView([.vertical, .horizontal]) {
+                Text(text)
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: true, vertical: true)
+                    .padding(9)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Color.clear
+                    .frame(height: 1)
+                    .id("end")
+            }
+            .frame(height: 220)
+            .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            // Logs are read from the bottom.
+            .onAppear { proxy.scrollTo("end", anchor: .bottom) }
+        }
+        .accessibilityLabel("Container logs")
+    }
+
+    private func load() {
+        phase = .loading
+        Task {
+            switch await model.logs(for: stray) {
+            case let .success(text): phase = .loaded(text.trimmingCharacters(in: .newlines))
+            case let .failure(error): phase = .failed(AppModel.describe(error))
+            }
+        }
+    }
+}
+
 // MARK: - Building blocks
 
 private struct Badge: View {
@@ -283,6 +429,24 @@ private struct ActionButton: View {
         }
         .buttonStyle(.bordered)
         .tint(tint == .primary ? nil : tint)
+    }
+}
+
+/// A square, icon-only companion to `ActionButton`.
+private struct IconActionButton: View {
+    let symbol: String
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 11.5, weight: .medium))
+                .frame(width: 18, height: 22)
+        }
+        .buttonStyle(.bordered)
+        .help(label)
+        .accessibilityLabel(label)
     }
 }
 

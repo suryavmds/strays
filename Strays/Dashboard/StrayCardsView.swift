@@ -45,13 +45,27 @@ struct SectionHeader: View {
             Text(verbatim: "\(section.strays.count)")
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
                 .foregroundStyle(.tertiary)
-            if let project = section.project {
+            if let project = section.project, project.rootPath.hasPrefix("/") {
                 Text(abbreviated(project.rootPath))
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .truncationMode(.head)
-                Spacer(minLength: 8)
+            }
+            Spacer(minLength: 8)
+            if let compose = section.composeProject, section.strays.contains(where: \.isRunning) {
+                Button {
+                    model.stopComposeProject(compose)
+                } label: {
+                    Label("Stop All", systemImage: "stop.fill")
+                        .font(.system(size: 10.5, weight: .medium))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                .tint(Theme.lan)
+                .help("Stop every running container of the compose project \(compose)")
+            }
+            if let project = section.project, project.rootPath.hasPrefix("/") {
                 Button {
                     model.reveal(project)
                 } label: {
@@ -62,8 +76,6 @@ struct SectionHeader: View {
                 .foregroundStyle(.secondary)
                 .help("Reveal \(project.name) in Finder")
                 .accessibilityLabel("Reveal \(project.name) in Finder")
-            } else {
-                Spacer()
             }
         }
         .accessibilityElement(children: .contain)
@@ -108,8 +120,11 @@ struct StrayCard: View {
         .overlay { shape.strokeBorder(borderStyle, lineWidth: isSelected || stray.isLANVisible ? 1.5 : 1) }
         .shadow(color: .black.opacity(isHovering ? 0.22 : 0.1), radius: isHovering ? 12 : 5, y: isHovering ? 6 : 2)
         .scaleEffect(isHovering ? 1.012 : 1)
+        .opacity(stray.isRunning ? 1 : 0.62)
         .contentShape(shape)
         .onTapGesture(perform: onSelect)
+        .onAppear { model.setVisible(true, stray) }
+        .onDisappear { model.setVisible(false, stray) }
         .onHover { hovering in
             withAnimation(Theme.hoverSpring) { isHovering = hovering }
         }
@@ -154,16 +169,20 @@ struct StrayCard: View {
     }
 
     private var secondLine: String {
-        if activity == .stopping || activity == .killing { return "Stopping…" }
+        if let progress = activity?.progressLabel { return progress }
         var parts: [String] = []
         if let subtitle = stray.subtitle { parts.append(subtitle) }
-        if let pid = stray.processGroup?.root.pid { parts.append("PID \(pid)") }
+        if let container = stray.container {
+            parts.append(container.shortID)
+        } else if let pid = stray.processGroup?.root.pid {
+            parts.append("PID \(pid)")
+        }
         return parts.joined(separator: " · ")
     }
 
     @ViewBuilder private var ports: some View {
         if stray.ports.isEmpty {
-            Text("No listening port")
+            Text(stray.isRunning ? "No listening port" : stray.container?.status ?? stray.brewService?.statusLabel ?? "Stopped")
                 .font(.system(size: 10.5))
                 .foregroundStyle(.tertiary)
                 .frame(height: 20)
@@ -176,12 +195,16 @@ struct StrayCard: View {
     private var footer: some View {
         HStack(alignment: .bottom, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
-                Sparkline(values: model.history.samples(for: stray.id).map(\.cpuPercent), color: accent == Theme.neutral ? .secondary : accent)
+                Sparkline(values: stray.isRunning ? model.history.samples(for: stray.id).map(\.cpuPercent) : [], color: accent == Theme.neutral ? .secondary : accent)
                     .frame(width: 84, height: 20)
                 HStack(spacing: 8) {
-                    stat(StraysFormat.cpu(stray.cpuPercent), "CPU")
-                    stat(StraysFormat.memory(stray.memoryBytes), nil)
-                    stat(StraysFormat.uptime(since: stray.startedAt), "up")
+                    if stray.isRunning {
+                        stat(StraysFormat.cpu(stray.cpuPercent), "CPU")
+                        stat(StraysFormat.memory(stray.memoryBytes), nil)
+                        stat(StraysFormat.uptime(since: stray.startedAt), "up")
+                    } else {
+                        stat("Not running", nil)
+                    }
                 }
             }
             Spacer(minLength: 0)
@@ -218,6 +241,11 @@ struct StrayCard: View {
                     model.copyURL(of: port)
                 }
             }
+            if stray.canBeStarted {
+                IconButton(symbol: "play.fill", label: "Start \(stray.title)", tint: .green) {
+                    model.start(stray)
+                }
+            }
             if stray.canBeStopped {
                 IconButton(symbol: "stop.fill", label: "Stop \(stray.title)", tint: Theme.lan) {
                     model.requestStop(stray)
@@ -245,7 +273,7 @@ struct StrayContextMenu: View {
             Button("Copy URL") { model.copyURL(of: port) }
             Divider()
         }
-        if let project = stray.project {
+        if let project = stray.project, project.rootPath.hasPrefix("/") {
             Button("Reveal \(project.name) in Finder") { model.reveal(project) }
         }
         if model.workingFolder(of: stray) != nil {
@@ -261,12 +289,26 @@ struct StrayContextMenu: View {
                 }
             }
         }
-        if stray.canBeStopped {
+        if let container = stray.container {
             Divider()
-            if stray.category == .dev {
-                Button("Restart (Experimental)") { model.restart(stray) }
-            }
+            Button("Copy Container ID") { model.copy(container.id, label: "container ID") }
+        }
+
+        Divider()
+        if stray.canBeStarted {
+            Button("Start") { model.start(stray) }
+        }
+        if stray.canBeRestarted {
+            Button(stray.category == .dev ? "Restart (Experimental)" : "Restart") { model.restart(stray) }
+        }
+        if stray.canBeStopped {
             Button("Stop", role: .destructive) { model.requestStop(stray) }
+        }
+        if let compose = stray.container?.composeProject, stray.isRunning {
+            Button("Stop Compose Project “\(compose)”", role: .destructive) { model.stopComposeProject(compose) }
+        }
+        if stray.container != nil {
+            Button("Remove Container…", role: .destructive) { model.requestRemove(stray) }
         }
     }
 }

@@ -20,8 +20,13 @@ struct ActivityPrompt: View {
 
     private func content(for activity: StrayActivity) -> InlinePrompt? {
         switch activity {
-        case .stopping, .killing:
+        case .stopping, .killing, .starting, .restarting, .removing:
             return nil
+        case let .confirmingRemoval(reason):
+            return InlinePrompt(symbol: "trash.fill", tint: Theme.lan, message: reason) {
+                PromptButton("Remove", role: .destructive) { model.confirmRemove(stray) }
+                PromptButton("Cancel") { model.dismissActivity(for: stray) }
+            }
         case let .confirming(reason):
             return InlinePrompt(symbol: "exclamationmark.triangle.fill", tint: Theme.brew, message: "\(reason) Stop it anyway?") {
                 PromptButton("Stop", role: .destructive) { model.confirmStop(stray) }
@@ -101,10 +106,33 @@ struct PromptButton: View {
 }
 
 extension Stray {
-    /// Protected processes get no Stop button at all.
+    /// Protected processes get no Stop button at all. Containers and
+    /// services can be stopped whenever they are running.
     var canBeStopped: Bool {
-        guard let policy = stopPolicy else { return false }
-        if case .forbidden = policy { return false }
-        return true
+        switch kind {
+        case .container, .brewService:
+            return isRunning
+        case .process:
+            guard let policy = stopPolicy else { return false }
+            if case .forbidden = policy { return false }
+            return true
+        }
+    }
+
+    /// A stopped container or service can be started again.
+    var canBeStarted: Bool {
+        switch kind {
+        case .container, .brewService: !isRunning
+        case .process: false
+        }
+    }
+
+    /// Docker and Homebrew restart cleanly; for a dev process it is a
+    /// best-effort rerun of its command line.
+    var canBeRestarted: Bool {
+        switch kind {
+        case .container, .brewService: isRunning
+        case .process: category == .dev && canBeStopped
+        }
     }
 }

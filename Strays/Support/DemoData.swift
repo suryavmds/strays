@@ -5,7 +5,7 @@ import StraysCore
 /// nothing from a real machine ever ends up in a README image.
 enum DemoData {
     static var snapshot: StraysSnapshot {
-        StraysSnapshot(strays: strays, capturedAt: Date(), scanDuration: 0.014)
+        StraysSnapshot(strays: strays, capturedAt: Date(), scanDuration: 0.014, isDockerAvailable: true, isBrewAvailable: true)
     }
 
     /// Plausible-looking history so sparklines have something to draw.
@@ -45,6 +45,11 @@ enum DemoData {
             dev(pid: 51_960, title: "celery -A tasks worker", runtime: python, project: api, minutes: 46, cpu: 0, megabytes: 142),
             dev(pid: 39_004, title: "python3 -m http.server 9000", runtime: python, project: nil, minutes: 1_520, cpu: 0, megabytes: 21,
                 ports: [port(9000, pid: 39_004)]),
+            container("7f3a9c21d4e85b60", name: "shop-postgres-1", image: "postgres:17-alpine", ports: [(54_329, 5_432)], compose: "shop", project: shop, minutes: 128, cpu: 0.8, megabytes: 61),
+            container("b21e77aa90c3f514", name: "shop-redis-1", image: "redis:8-alpine", ports: [(63_799, 6_379)], compose: "shop", project: shop, minutes: 128, cpu: 0.3, megabytes: 12),
+            container("0c9d4e1f2a3b4c5d", name: "s3mock", image: "adobe/s3mock:latest", ports: [(9_090, 9_090)], compose: nil, project: nil, minutes: 0, cpu: 0, megabytes: 0, running: false),
+            service("postgresql@17", pid: 755, port: 5_432, minutes: 3_700, megabytes: 48),
+            service("redis", pid: nil, port: nil, minutes: 0, megabytes: 0, running: false),
             other(pid: 20_009, title: "Visual Studio Code", subtitle: "Code Helper (Plugin)", path: "/Applications/Visual Studio Code.app/Contents/MacOS/Electron", minutes: 300, megabytes: 64,
                   ports: [port(57_482, pid: 20_009)]),
             other(pid: 1_045, title: "ollama serve", subtitle: nil, path: "/opt/homebrew/bin/ollama", minutes: 4_300, megabytes: 38,
@@ -54,6 +59,80 @@ enum DemoData {
             other(pid: 412, title: "httpd", subtitle: nil, path: "/usr/sbin/httpd", minutes: 9_000, megabytes: 0, uid: 0,
                   ports: [port(80, pid: 412, address: "*")]),
         ]
+    }
+
+    static let logs = """
+    PostgreSQL Database directory appears to contain a database; Skipping initialization
+    2026-10-12 04:38:11.201 UTC [1] LOG:  starting PostgreSQL 17.2 on aarch64-unknown-linux-musl
+    2026-10-12 04:38:11.201 UTC [1] LOG:  listening on IPv4 address "0.0.0.0", port 5432
+    2026-10-12 04:38:11.204 UTC [1] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+    2026-10-12 04:38:11.231 UTC [1] LOG:  database system is ready to accept connections
+    2026-10-12 04:43:11.292 UTC [27] LOG:  checkpoint starting: time
+    2026-10-12 04:43:12.118 UTC [27] LOG:  checkpoint complete: wrote 11 buffers (0.1%)
+    """
+
+    private static func container(_ id: String, name: String, image: String, ports: [(UInt16, UInt16)], compose: String?, project: Project?, minutes: Double, cpu: Double, megabytes: Double, running: Bool = true) -> Stray {
+        let started = running ? Date().addingTimeInterval(-minutes * 60) : nil
+        let container = DockerContainer(
+            id: id + String(repeating: "0", count: 48),
+            name: name,
+            image: image,
+            command: "docker-entrypoint.sh",
+            state: running ? .running : .exited,
+            status: running ? "Up \(StraysFormat.duration(minutes * 60)) (healthy)" : "Exited (255) 3 hours ago",
+            createdAt: Date().addingTimeInterval(-86_400 * 9),
+            startedAt: started,
+            ports: ports.map { .init(hostIP: "0.0.0.0", hostPort: $0.0, containerPort: $0.1, transport: .tcp) },
+            composeProject: compose,
+            composeService: compose.map { _ in name.split(separator: "-").dropFirst().first.map(String.init) ?? name },
+            composeWorkingDirectory: project?.rootPath,
+            cpuPercent: running ? cpu : nil,
+            memoryBytes: running ? UInt64(megabytes * 1_048_576) : nil
+        )
+        return Stray(
+            id: "docker:\(container.id)",
+            kind: .container(container),
+            category: .docker,
+            title: name,
+            subtitle: image,
+            ports: running ? container.portSummaries : [],
+            project: project,
+            startedAt: started,
+            cpuPercent: cpu,
+            memoryBytes: UInt64(megabytes * 1_048_576),
+            isRunning: running
+        )
+    }
+
+    private static func service(_ name: String, pid: Int32?, port: UInt16?, minutes: Double, megabytes: Double, running: Bool = true) -> Stray {
+        let service = BrewService(
+            name: name,
+            serviceName: "homebrew.mxcl.\(name)",
+            status: running ? .started : .stopped,
+            pid: pid,
+            user: running ? "dev" : nil,
+            file: "\(home)/Library/LaunchAgents/homebrew.mxcl.\(name).plist",
+            command: "/opt/homebrew/opt/\(name)/bin/\(name.split(separator: "@").first ?? "service")"
+        )
+        let process = pid.map { pid in
+            ProcessGroup(root: details(
+                pid: pid, name: "postgres", path: "/opt/homebrew/opt/\(name)/bin/postgres",
+                arguments: ["/opt/homebrew/opt/\(name)/bin/postgres", "-D", "/opt/homebrew/var/\(name)"],
+                cwd: "/opt/homebrew/var/\(name)", minutes: minutes, cpu: 0.1, megabytes: megabytes
+            ))
+        }
+        return Stray(
+            id: "brew:\(name)",
+            kind: .brewService(service, process: process),
+            category: .brew,
+            title: name,
+            subtitle: "Homebrew · \(service.statusLabel)",
+            ports: port.map { [self.port($0, pid: pid ?? 0)] } ?? [],
+            startedAt: running ? Date().addingTimeInterval(-minutes * 60) : nil,
+            cpuPercent: running ? 0.1 : 0,
+            memoryBytes: UInt64(megabytes * 1_048_576),
+            isRunning: running
+        )
     }
 
     private static func port(_ number: UInt16, pid: Int32, address: String = "127.0.0.1") -> PortSummary {

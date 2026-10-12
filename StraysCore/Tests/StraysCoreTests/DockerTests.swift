@@ -428,4 +428,84 @@ final class DockerLiveTests: XCTestCase {
             }
         }
     }
+
+    /// The full action set against a real daemon, on a container this test
+    /// creates and removes itself. It never touches any other container.
+    ///
+    /// Opt-in, because it needs Docker and a local image:
+    ///
+    ///     STRAYS_DOCKER_LIVE=1 swift test --filter DockerLiveTests
+    func testActionsOnAThrowawayContainer() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["STRAYS_DOCKER_LIVE"] == "1", "set STRAYS_DOCKER_LIVE=1 to run")
+        let socket = try XCTUnwrap(DockerSocketLocator.locate(), "no Docker socket")
+        let http = UnixHTTPClient(socketPath: socket)
+        let client = DockerClient(socketPath: socket)
+
+        // Any small local image with a `sleep` will do; nothing is pulled.
+        struct Image: Decodable {
+            let repoTags: [String]?
+            enum CodingKeys: String, CodingKey { case repoTags = "RepoTags" }
+        }
+        let images = try JSONDecoder().decode([Image].self, from: try await http.send(path: "/images/json").body)
+        let candidates = images.flatMap { $0.repoTags ?? [] }
+        let image = try XCTUnwrap(
+            candidates.first { tag in ["alpine", "busybox", "redis", "postgres"].contains { tag.contains($0) } },
+            "no suitable local image among \(candidates)"
+        )
+
+        let name = "strays-selftest-\(UUID().uuidString.prefix(8).lowercased())"
+        let spec = try JSONSerialization.data(withJSONObject: ["Image": image, "Entrypoint": ["sleep"], "Cmd": ["300"]])
+        let created = try await http.send(method: "POST", path: "/containers/create?name=\(name)", body: spec)
+        XCTAssertEqual(created.status, 201, created.bodyText)
+        struct Created: Decodable {
+            let id: String
+            enum CodingKeys: String, CodingKey { case id = "Id" }
+        }
+        let id = try JSONDecoder().decode(Created.self, from: created.body).id
+        addTeardownBlock {
+            // Whatever happened above, leave nothing behind.
+            try? await client.remove(id, force: true)
+        }
+
+        func state() async throws -> DockerContainer.State? {
+            try await client.containers().first { $0.id == id }?.state
+        }
+
+        var current = try await state()
+        XCTAssertEqual(current, .created)
+
+        try await client.start(id)
+        current = try await state()
+        XCTAssertEqual(current, .running)
+        let startedAt = try await client.startedAt(of: id)
+        XCTAssertLessThan(abs(try XCTUnwrap(startedAt).timeIntervalSinceNow), 120)
+
+        let first = try await client.stats(of: id)
+        XCTAssertGreaterThan(first.systemCPUTime, 0)
+        XCTAssertGreaterThan(first.memoryBytes, 0)
+
+        let logs = try await client.logs(of: id)
+        XCTAssertEqual(logs, "", "sleep prints nothing")
+
+        try await client.restart(id, grace: 1)
+        current = try await state()
+        XCTAssertEqual(current, .running)
+
+        try await client.stop(id, grace: 1)
+        current = try await state()
+        XCTAssertEqual(current, .exited)
+        try await client.stop(id, grace: 1)
+
+        try await client.start(id)
+        do {
+            try await client.remove(id)
+            XCTFail("a running container must not be removed without force")
+        } catch let DockerError.api(status, _) {
+            XCTAssertEqual(status, 409)
+        }
+        try await client.remove(id, force: true)
+        current = try await state()
+        XCTAssertNil(current)
+    }
 }
+

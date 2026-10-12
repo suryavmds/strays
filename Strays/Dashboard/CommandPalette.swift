@@ -143,6 +143,18 @@ struct CommandPalette: View {
                     model.requestStop(stray)
                 })
             }
+            if stray.canBeStarted {
+                commands.append(PaletteCommand(id: "start:\(stray.id)", title: "Start \(stray.title)", subtitle: stray.categoryLabel, symbol: "play.fill", tint: .green) {
+                    state.select(stray)
+                    model.start(stray)
+                })
+            }
+            if stray.canBeRestarted, stray.category != .dev {
+                commands.append(PaletteCommand(id: "restart:\(stray.id)", title: "Restart \(stray.title)", subtitle: stray.categoryLabel, symbol: "arrow.clockwise", tint: accent) {
+                    state.select(stray)
+                    model.restart(stray)
+                })
+            }
             if let port = stray.primaryPort, port.transport == .tcp {
                 commands.append(PaletteCommand(id: "copy:\(stray.id)", title: "Copy URL of \(stray.title)", subtitle: "localhost:\(port.port)", symbol: "doc.on.doc") {
                     model.copyURL(of: port)
@@ -153,6 +165,13 @@ struct CommandPalette: View {
         commands.append(PaletteCommand(id: "go:all", title: "Go to All", subtitle: nil, symbol: "square.grid.2x2") { state.sidebar = .all })
         commands.append(PaletteCommand(id: "go:ports", title: "Go to Listening Ports", subtitle: nil, symbol: "point.3.connected.trianglepath.dotted") { state.sidebar = .ports })
         commands.append(PaletteCommand(id: "go:others", title: "Go to Apps & System", subtitle: nil, symbol: "macwindow.on.rectangle") { state.sidebar = .others })
+        commands.append(PaletteCommand(id: "go:docker", title: "Go to Docker", subtitle: nil, symbol: "shippingbox", tint: Theme.docker) { state.sidebar = .docker })
+        commands.append(PaletteCommand(id: "go:brew", title: "Go to Brew Services", subtitle: nil, symbol: "mug", tint: Theme.brew) { state.sidebar = .brew })
+        for compose in Set(model.containers.filter(\.isRunning).compactMap { $0.container?.composeProject }).sorted() {
+            commands.append(PaletteCommand(id: "compose-stop:\(compose)", title: "Stop compose project \(compose)", subtitle: "Docker", symbol: "square.stack.3d.up.slash", tint: Theme.lan) {
+                model.stopComposeProject(compose)
+            })
+        }
         for group in model.projectGroups {
             commands.append(PaletteCommand(id: "go:\(group.id)", title: "Go to \(group.title)", subtitle: "Project", symbol: "folder") {
                 state.sidebar = .project(group.id)

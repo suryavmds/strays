@@ -8,20 +8,29 @@ struct SidebarView: View {
     var body: some View {
         List(selection: selection) {
             Section {
-                row(.all, "All", symbol: "square.grid.2x2", count: model.snapshot.strays.count, tint: Theme.dev)
+                row(.all, "All", symbol: "square.grid.2x2", count: model.activeStrays.count + model.otherListeners.count, tint: Theme.dev)
                 row(.ports, "Listening Ports", symbol: "point.3.connected.trianglepath.dotted", count: model.snapshot.strays.filter { !$0.ports.isEmpty }.count, tint: Theme.docker)
             }
 
             Section("Projects") {
-                if model.projectGroups.isEmpty {
+                // Loose containers and services have their own entries below.
+                let groups = model.projectGroups.filter { $0.project != nil || $0.id == "loose:dev" }
+                if groups.isEmpty {
                     Text("Nothing running")
                         .font(.system(size: 11))
                         .foregroundStyle(.tertiary)
                 }
-                ForEach(model.projectGroups) { group in
-                    row(.project(group.id), group.title, symbol: group.project == nil ? "questionmark.folder" : "folder", count: group.strays.count, tint: Theme.dev)
-                        .help(group.project?.rootPath ?? "Dev processes that are not inside a project folder")
+                ForEach(groups) { group in
+                    row(.project(group.id), group.title, symbol: group.symbol.replacingOccurrences(of: ".fill", with: ""), count: group.strays.count, tint: Theme.dev)
+                        .help(group.project?.rootPath ?? "Things that are not inside a project folder")
                 }
+            }
+
+            Section("Services") {
+                row(.docker, "Docker", symbol: "shippingbox", count: model.containers.filter(\.isRunning).count, tint: Theme.docker)
+                    .help(model.snapshot.isDockerAvailable ? "Containers, running and stopped" : "Docker is not running")
+                row(.brew, "Brew Services", symbol: "mug", count: model.brewServices.filter(\.isRunning).count, tint: Theme.brew)
+                    .help(model.snapshot.isBrewAvailable ? "Homebrew services, started and stopped" : "Homebrew is not installed")
             }
 
             Section("Everything else") {

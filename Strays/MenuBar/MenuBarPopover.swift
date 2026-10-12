@@ -64,7 +64,7 @@ struct MenuBarPopover: View {
 
     private var summary: String {
         guard model.hasLoaded else { return "Looking around…" }
-        let count = model.devStrays.count
+        let count = model.activeStrays.count
         switch count {
         case 0: return "Nothing running in the background"
         case 1: return "1 thing running"
@@ -80,7 +80,7 @@ struct MenuBarPopover: View {
                 .controlSize(.small)
                 .frame(maxWidth: .infinity)
                 .frame(height: 96)
-        } else if model.devStrays.isEmpty && model.otherListeners.isEmpty {
+        } else if model.activeStrays.isEmpty && model.otherListeners.isEmpty {
             emptyState
         } else {
             ScrollView {
@@ -94,7 +94,7 @@ struct MenuBarPopover: View {
 
     private var list: some View {
         VStack(alignment: .leading, spacing: 2) {
-            if model.devStrays.isEmpty {
+            if model.activeStrays.isEmpty {
                 allQuietBanner
             }
             ForEach(model.projectGroups) { group in
@@ -117,7 +117,7 @@ struct MenuBarPopover: View {
         HStack(spacing: 8) {
             Image(systemName: "moon.zzz.fill")
                 .foregroundStyle(.secondary)
-            Text("No dev processes running")
+            Text("Nothing of yours is running")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
         }
@@ -157,7 +157,7 @@ struct MenuBarPopover: View {
                 }
             }
         }
-        .padding(.top, model.devStrays.isEmpty ? 0 : 4)
+        .padding(.top, model.activeStrays.isEmpty ? 0 : 4)
     }
 
     private var emptyState: some View {
@@ -230,7 +230,7 @@ private struct ProjectHeader: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: group.project == nil ? "questionmark.folder" : "folder.fill")
+            Image(systemName: group.symbol)
                 .font(.system(size: 10))
             Text(group.title)
                 .font(.system(size: 11, weight: .semibold))
@@ -300,6 +300,8 @@ struct StrayRow: View {
             withAnimation(Theme.hoverSpring) { isHovering = hovering }
         }
         .animation(Theme.hoverSpring, value: activity)
+        .onAppear { model.setVisible(true, stray) }
+        .onDisappear { model.setVisible(false, stray) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityText)
     }
@@ -313,7 +315,7 @@ struct StrayRow: View {
                     .font(.system(size: 12.5, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(activity == .stopping || activity == .killing ? "Stopping…" : stray.statusLine())
+                Text(activity?.progressLabel ?? stray.statusLine())
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -368,14 +370,22 @@ struct StrayRow: View {
 
 struct ToastView: View {
     let toast: Toast
+    @Environment(AppModel.self) private var model
 
     var body: some View {
         HStack(spacing: 7) {
             Image(systemName: toast.symbol)
-                .foregroundStyle(.green)
+                .foregroundStyle(toast.symbol.contains("exclamationmark") ? Theme.brew : .green)
             Text(toast.message)
                 .lineLimit(1)
                 .truncationMode(.middle)
+            if let action = toast.action {
+                Button(action.title) { model.performToastAction() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.leading, 4)
+            }
         }
         .font(.system(size: 12, weight: .medium))
         .padding(.horizontal, 12)
@@ -383,7 +393,7 @@ struct ToastView: View {
         .background(.regularMaterial, in: Capsule())
         .overlay(Capsule().strokeBorder(.primary.opacity(0.08)))
         .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.updatesFrequently)
     }
 }
